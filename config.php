@@ -21,6 +21,7 @@ $CFG->dboptions = array (
 $CFG->wwwroot   = 'http://localhost/moodle';
 $CFG->dataroot  = 'C:\\xampp\\moodledata';
 $CFG->admin     = 'admin';
+$CFG->logouturl = "http://localhost/moodle/login/index.php";
 
 $CFG->directorypermissions = 0777;
 
