@@ -137,6 +137,7 @@
                 </div>
 
             <h1> Welcome to <br> Davao del Norte <br>State College</h1>
+            <h2 style="background-color: green; color:white; width:280px;">Learning Management </h2><br><h2 style="background-color: green; color:white; width:100px; margin-top: -20px;"> System</h2>
         </div>
 <div class="col-xl-5 col-sm-8 ">
 <div  id="card-login" class="card shadow-sm">
@@ -180,32 +181,32 @@
                                         class="form-control"
                                          value="{{username}}"
                                          placeholder={{#quote}}{{^canloginbyemail}}{{#str}}username{{/str}}{{/canloginbyemail}}{{#canloginbyemail}}{{#str}}usernameemail{{/str}}{{/canloginbyemail}}{{/quote}}>
+                         </div>
                             </div>
-                        </div>
 
-                        <div class="form-group">
-                         <div class="input-icons">
-                         <i class="fa fa-lg fa-lock" aria-hidden="true"></i>
+                            <div class="form-group">
+                            <div class="input-icons">
+                            <i class="fa fa-lg fa-lock" aria-hidden="true"></i>
                             <label for="password" class="sr-only">{{#str}} password {{/str}}</label>
                             <input  class="input-field" type="password" name="password" id="password" value=""
                                 class="form-control"
                                 placeholder={{#quote}}{{#str}}password{{/str}}{{/quote}}>
-                        </div>
-                        <div class="text-center mb-2">
+                          </div>
+                         <div class="text-center mb-2">
                             <button type="submit" class="btn btn-primary btn-block" id="loginbtn">{{#str}}login{{/str}}</button>
-                        </div>
-                        <div  class="row text-center">
+                         </div>
+                         <div  class="row text-center">
                             {{#rememberusername}}
                                 <div class="sr-only" class="rememberpass col-md-6">
                                     <input type="checkbox" name="rememberusername" id="rememberusername" value="1" {{#username}}checked="checked"{{/username}} />
                                     <label for="rememberusername">{{#str}} rememberusername, theme_trema {{/str}}</label>
                                 </div>
                             {{/rememberusername}}
-                        <div class="forgetpass mx-auto {{#rememberusername}}col-md-12{{/rememberusername}}">
+                         <div class="forgetpass mx-auto {{#rememberusername}}col-md-12{{/rememberusername}}">
                             <p><a href="{{forgotpasswordurl}}">{{#str}}forgotten{{/str}}</a></p>
-                        </div>
-                    </div>
-                    </form>
+                         </div>
+                     </div>
+                </form>
 
                 </div>
 
