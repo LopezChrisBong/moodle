@@ -57,8 +57,8 @@ body#page-login-index {
 
     .input-icons i {
         position: absolute;
-        margin-top: 20px;
-        margin-left: 10px;
+        margin-top: 15px;
+        margin-left: 20px;
         
     }
       
@@ -74,12 +74,16 @@ body#page-login-index {
       
     .input-field {
         width: 100%;
-        padding: 10px;
+        padding: 0;
         text-align: center;
     }
     #logo-login{
         margin-right:250px; 
         padding-right:100px;
+    }
+
+    #loginbtn{
+        background-color: #5dd240;
     }
 
 
