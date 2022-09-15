@@ -86,11 +86,15 @@ body#page-login-index {
         background-color: #5dd240;
     }
 
-    //LOGIN INSTITUTE ICONS
-    #institutes{
-        padding: 30px;
-       }
-    
-    
+  #footer-text{
+    margin-top: 20px;
+    color: white;
+  }
+  #facebook-icon,
+  #twitter-icon,
+  #youtube-icon{
+    padding-inline: 30px;
+  }
 
 }
+
