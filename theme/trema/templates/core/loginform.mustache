@@ -126,7 +126,7 @@
 
 <div class="row justify-content-center">
 
-     <div  class="d-none d-sm-block " class="col-xl-6 col-md-8 col-sm-8" class="justify-between">
+     <div  class="d-none d-sm-block " class="col-xl-6 col-md-6 col-sm-6" class="justify-content-sm-center">
         <div  id="logo-login" class="row justify-content-md-center">
                 {{#logourl}}
                     <h1 class="h2 card-header text-center" ><img src="{{logourl}}" class="img-responsive" title="{{sitename}}" alt="{{sitename}}"/></h1>
@@ -141,7 +141,7 @@
                 <h2 style="background-color: green; color:white; width:280px;">Learning Management </h2><br><h2 style="background-color: green; color:white; width:100px; margin-top: -20px;"> System</h2>
             </div>
         </div>
-    <div class="col-xl-5 col-md-8 col-sm-8 ">
+    <div class="col-xl-5 col-md-6 col-sm-6 ">
     <div  id="card-login" class="card shadow-sm">
     <div class="card-block ">
         <div class="card-body">
@@ -214,14 +214,14 @@
                                     <label for="rememberusername">{{#str}} rememberusername, theme_trema {{/str}}</label>
                                 </div>
                             {{/rememberusername}}
-                         <div class="forgetpass mx-auto {{#rememberusername}}col-md-12{{/rememberusername}}">
+                         <div class=" forgetpass mx-auto {{#rememberusername}}col-md-12{{/rememberusername}}">
                             <p><a href="{{forgotpasswordurl}}">{{#str}}forgotten{{/str}}</a></p>
                             <p>Or Login using:</p>
                          </div>
                          
                         </div>
                      <div>
-                        <button type="submit" class="btn btn-block shadow" style="background-color: white;"><i ></i><p style="color: rgb(43, 42, 42);">Google</p></button>
+                        <a href="" class="btn btn-secondary btn-block"><img src="https://accounts.google.com/favicon.ico" alt="" width="24" height="24"> Google</a>
                      </div>
                 </form>
 
