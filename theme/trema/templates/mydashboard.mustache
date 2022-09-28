@@ -54,7 +54,7 @@
 <body {{{ bodyattributes }}}>
 {{> core/local/toast/wrapper}}
 <div id="page-wrapper" class="d-print-block">
-
+    
     {{{ output.standard_top_of_body_html }}}
 
     {{> theme_boost/navbar }}
@@ -72,6 +72,7 @@
             {{$closebuttontext}}{{#str}}closecourseindex, core{{/str}}{{/closebuttontext}}
         {{/ theme_boost/drawer}}
     {{/courseindex}}
+   
     {{#hasblocks}}
         {{< theme_boost/drawer }}
             {{$id}}theme_boost-drawers-blocks{{/id}}
@@ -126,7 +127,14 @@
                     </div>
                 {{/hasblocks}}
             </div>
-            {{{ output.full_header }}}
+
+        {{! Custome Header for Carousel}}
+    
+            <div class="">{{{ output.full_header }}}</div>
+           
+
+
+            
             {{#showdashboardadmin}}
                 {{> theme_trema/mydashboard_admin }}
             {{/showdashboardadmin}}
@@ -162,8 +170,8 @@
                 </div>
             </div>
         </div>
-        <div style="background-color: red;">
-        <h1>LOVE</h1></div>
+     
+        
         
         {{#hasadminblocks}}
             <div id="side-admin-blocks" class="mt-4">
@@ -192,9 +200,11 @@
             {{#pix}} i/up, core{{/pix}}
         </a>
     </div>
+   
     {{{ output.standard_after_main_region_html }}}
-
+   
 </div>
+
 
 </body>
 </html>
