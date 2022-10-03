@@ -1,0 +1,3529 @@
+var H5P = H5P || {};
+
+/**
+ * Constructor.
+ *
+ * @param {Object} params Options for this library.
+ * @param {Number} id Content identifier
+ * @returns {undefined}
+ */
+(function ($) {
+  H5P.Image = function (params, id, extras) {
+    H5P.EventDispatcher.call(this);
+    this.extras = extras;
+
+    if (params.file === undefined || !(params.file instanceof Object)) {
+      this.placeholder = true;
+    }
+    else {
+      this.source = H5P.getPath(params.file.path, id);
+      this.width = params.file.width;
+      this.height = params.file.height;
+    }
+
+    this.alt = (!params.decorative && params.alt !== undefined) ? params.alt : '';
+
+    if (params.title !== undefined) {
+      this.title = params.title;
+    }
+  };
+
+  H5P.Image.prototype = Object.create(H5P.EventDispatcher.prototype);
+  H5P.Image.prototype.constructor = H5P.Image;
+
+  /**
+   * Wipe out the content of the wrapper and put our HTML in it.
+   *
+   * @param {jQuery} $wrapper
+   * @returns {undefined}
+   */
+  H5P.Image.prototype.attach = function ($wrapper) {
+    var self = this;
+    var source = this.source;
+
+    if (self.$img === undefined) {
+      if(self.placeholder) {
+        self.$img = $('<div>', {
+          width: '100%',
+          height: '100%',
+          class: 'h5p-placeholder',
+          title: this.title === undefined ? '' : this.title,
+          on: {
+            load: function () {
+              self.trigger('loaded');
+            }
+          }
+        });
+      } else {
+        self.$img = $('<img>', {
+          width: '100%',
+          height: '100%',
+          src: source,
+          alt: this.alt,
+          title: this.title === undefined ? '' : this.title,
+          on: {
+            load: function () {
+              self.trigger('loaded');
+            }
+          }
+        });
+      }
+    }
+
+    $wrapper.addClass('h5p-image').html(self.$img);
+  };
+
+  return H5P.Image;
+}(H5P.jQuery));
+;
+var H5P = H5P || {};
+/**
+ * Transition contains helper function relevant for transitioning
+ */
+H5P.Transition = (function ($) {
+
+  /**
+   * @class
+   * @namespace H5P
+   */
+  Transition = {};
+
+  /**
+   * @private
+   */
+  Transition.transitionEndEventNames = {
+    'WebkitTransition': 'webkitTransitionEnd',
+    'transition':       'transitionend',
+    'MozTransition':    'transitionend',
+    'OTransition':      'oTransitionEnd',
+    'msTransition':     'MSTransitionEnd'
+  };
+
+  /**
+   * @private
+   */
+  Transition.cache = [];
+
+  /**
+   * Get the vendor property name for an event
+   *
+   * @function H5P.Transition.getVendorPropertyName
+   * @static
+   * @private
+   * @param  {string} prop Generic property name
+   * @return {string}      Vendor specific property name
+   */
+  Transition.getVendorPropertyName = function (prop) {
+
+    if (Transition.cache[prop] !== undefined) {
+      return Transition.cache[prop];
+    }
+
+    var div = document.createElement('div');
+
+    // Handle unprefixed versions (FF16+, for example)
+    if (prop in div.style) {
+      Transition.cache[prop] = prop;
+    }
+    else {
+      var prefixes = ['Moz', 'Webkit', 'O', 'ms'];
+      var prop_ = prop.charAt(0).toUpperCase() + prop.substr(1);
+
+      if (prop in div.style) {
+        Transition.cache[prop] = prop;
+      }
+      else {
+        for (var i = 0; i < prefixes.length; ++i) {
+          var vendorProp = prefixes[i] + prop_;
+          if (vendorProp in div.style) {
+            Transition.cache[prop] = vendorProp;
+            break;
+          }
+        }
+      }
+    }
+
+    return Transition.cache[prop];
+  };
+
+  /**
+   * Get the name of the transition end event
+   *
+   * @static
+   * @private
+   * @return {string}  description
+   */
+  Transition.getTransitionEndEventName = function () {
+    return Transition.transitionEndEventNames[Transition.getVendorPropertyName('transition')] || undefined;
+  };
+
+  /**
+   * Helper function for listening on transition end events
+   *
+   * @function H5P.Transition.onTransitionEnd
+   * @static
+   * @param  {domElement} $element The element which is transitioned
+   * @param  {function} callback The callback to be invoked when transition is finished
+   * @param  {number} timeout  Timeout in milliseconds. Fallback if transition event is never fired
+   */
+  Transition.onTransitionEnd = function ($element, callback, timeout) {
+    // Fallback on 1 second if transition event is not supported/triggered
+    timeout = timeout || 1000;
+    Transition.transitionEndEventName = Transition.transitionEndEventName || Transition.getTransitionEndEventName();
+    var callbackCalled = false;
+
+    var doCallback = function () {
+      if (callbackCalled) {
+        return;
+      }
+      $element.off(Transition.transitionEndEventName, callback);
+      callbackCalled = true;
+      clearTimeout(timer);
+      callback();
+    };
+
+    var timer = setTimeout(function () {
+      doCallback();
+    }, timeout);
+
+    $element.on(Transition.transitionEndEventName, function () {
+      doCallback();
+    });
+  };
+
+  /**
+   * Wait for a transition - when finished, invokes next in line
+   *
+   * @private
+   *
+   * @param {Object[]}    transitions             Array of transitions
+   * @param {H5P.jQuery}  transitions[].$element  Dom element transition is performed on
+   * @param {number=}     transitions[].timeout   Timeout fallback if transition end never is triggered
+   * @param {bool=}       transitions[].break     If true, sequence breaks after this transition
+   * @param {number}      index                   The index for current transition
+   */
+  var runSequence = function (transitions, index) {
+    if (index >= transitions.length) {
+      return;
+    }
+
+    var transition = transitions[index];
+    H5P.Transition.onTransitionEnd(transition.$element, function () {
+      if (transition.end) {
+        transition.end();
+      }
+      if (transition.break !== true) {
+        runSequence(transitions, index+1);
+      }
+    }, transition.timeout || undefined);
+  };
+
+  /**
+   * Run a sequence of transitions
+   *
+   * @function H5P.Transition.sequence
+   * @static
+   * @param {Object[]}    transitions             Array of transitions
+   * @param {H5P.jQuery}  transitions[].$element  Dom element transition is performed on
+   * @param {number=}     transitions[].timeout   Timeout fallback if transition end never is triggered
+   * @param {bool=}       transitions[].break     If true, sequence breaks after this transition
+   */
+  Transition.sequence = function (transitions) {
+    runSequence(transitions, 0);
+  };
+
+  return Transition;
+})(H5P.jQuery);
+;
+var H5P = H5P || {};
+
+/**
+ * Class responsible for creating a help text dialog
+ */
+H5P.JoubelHelpTextDialog = (function ($) {
+
+  var numInstances = 0;
+  /**
+   * Display a pop-up containing a message.
+   *
+   * @param {H5P.jQuery}  $container  The container which message dialog will be appended to
+   * @param {string}      message     The message
+   * @param {string}      closeButtonTitle The title for the close button
+   * @return {H5P.jQuery}
+   */
+  function JoubelHelpTextDialog(header, message, closeButtonTitle) {
+    H5P.EventDispatcher.call(this);
+
+    var self = this;
+
+    numInstances++;
+    var headerId = 'joubel-help-text-header-' + numInstances;
+    var helpTextId = 'joubel-help-text-body-' + numInstances;
+
+    var $helpTextDialogBox = $('<div>', {
+      'class': 'joubel-help-text-dialog-box',
+      'role': 'dialog',
+      'aria-labelledby': headerId,
+      'aria-describedby': helpTextId
+    });
+
+    $('<div>', {
+      'class': 'joubel-help-text-dialog-background'
+    }).appendTo($helpTextDialogBox);
+
+    var $helpTextDialogContainer = $('<div>', {
+      'class': 'joubel-help-text-dialog-container'
+    }).appendTo($helpTextDialogBox);
+
+    $('<div>', {
+      'class': 'joubel-help-text-header',
+      'id': headerId,
+      'role': 'header',
+      'html': header
+    }).appendTo($helpTextDialogContainer);
+
+    $('<div>', {
+      'class': 'joubel-help-text-body',
+      'id': helpTextId,
+      'html': message,
+      'role': 'document',
+      'tabindex': 0
+    }).appendTo($helpTextDialogContainer);
+
+    var handleClose = function () {
+      $helpTextDialogBox.remove();
+      self.trigger('closed');
+    };
+
+    var $closeButton = $('<div>', {
+      'class': 'joubel-help-text-remove',
+      'role': 'button',
+      'title': closeButtonTitle,
+      'tabindex': 1,
+      'click': handleClose,
+      'keydown': function (event) {
+        // 32 - space, 13 - enter
+        if ([32, 13].indexOf(event.which) !== -1) {
+          event.preventDefault();
+          handleClose();
+        }
+      }
+    }).appendTo($helpTextDialogContainer);
+
+    /**
+     * Get the DOM element
+     * @return {HTMLElement}
+     */
+    self.getElement = function () {
+      return $helpTextDialogBox;
+    };
+
+    self.focus = function () {
+      $closeButton.focus();
+    };
+  }
+
+  JoubelHelpTextDialog.prototype = Object.create(H5P.EventDispatcher.prototype);
+  JoubelHelpTextDialog.prototype.constructor = JoubelHelpTextDialog;
+
+  return JoubelHelpTextDialog;
+}(H5P.jQuery));
+;
+var H5P = H5P || {};
+
+/**
+ * Class responsible for creating auto-disappearing dialogs
+ */
+H5P.JoubelMessageDialog = (function ($) {
+
+  /**
+   * Display a pop-up containing a message.
+   *
+   * @param {H5P.jQuery} $container The container which message dialog will be appended to
+   * @param {string} message The message
+   * @return {H5P.jQuery}
+   */
+  function JoubelMessageDialog ($container, message) {
+    var timeout;
+
+    var removeDialog = function () {
+      $warning.remove();
+      clearTimeout(timeout);
+      $container.off('click.messageDialog');
+    };
+
+    // Create warning popup:
+    var $warning = $('<div/>', {
+      'class': 'joubel-message-dialog',
+      text: message
+    }).appendTo($container);
+
+    // Remove after 3 seconds or if user clicks anywhere in $container:
+    timeout = setTimeout(removeDialog, 3000);
+    $container.on('click.messageDialog', removeDialog);
+
+    return $warning;
+  }
+
+  return JoubelMessageDialog;
+})(H5P.jQuery);
+;
+var H5P = H5P || {};
+
+/**
+ * Class responsible for creating a circular progress bar
+ */
+
+H5P.JoubelProgressCircle = (function ($) {
+
+  /**
+   * Constructor for the Progress Circle
+   *
+   * @param {Number} number The amount of progress to display
+   * @param {string} progressColor Color for the progress meter
+   * @param {string} backgroundColor Color behind the progress meter
+   */
+  function ProgressCircle(number, progressColor, fillColor, backgroundColor) {
+    progressColor = progressColor || '#1a73d9';
+    fillColor = fillColor || '#f0f0f0';
+    backgroundColor = backgroundColor || '#ffffff';
+    var progressColorRGB = this.hexToRgb(progressColor);
+
+    //Verify number
+    try {
+      number = Number(number);
+      if (number === '') {
+        throw 'is empty';
+      }
+      if (isNaN(number)) {
+        throw 'is not a number';
+      }
+    } catch (e) {
+      number = 'err';
+    }
+
+    //Draw circle
+    if (number > 100) {
+      number = 100;
+    }
+
+    // We can not use rgba, since they will stack on top of each other.
+    // Instead we create the equivalent of the rgba color
+    // and applies this to the activeborder and background color.
+    var progressColorString = 'rgb(' + parseInt(progressColorRGB.r, 10) +
+      ',' + parseInt(progressColorRGB.g, 10) +
+      ',' + parseInt(progressColorRGB.b, 10) + ')';
+
+    // Circle wrapper
+    var $wrapper = $('<div/>', {
+      'class': "joubel-progress-circle-wrapper"
+    });
+
+    //Active border indicates progress
+    var $activeBorder = $('<div/>', {
+      'class': "joubel-progress-circle-active-border"
+    }).appendTo($wrapper);
+
+    //Background circle
+    var $backgroundCircle = $('<div/>', {
+      'class': "joubel-progress-circle-circle"
+    }).appendTo($activeBorder);
+
+    //Progress text/number
+    $('<span/>', {
+      'text': number + '%',
+      'class': "joubel-progress-circle-percentage"
+    }).appendTo($backgroundCircle);
+
+    var deg = number * 3.6;
+    if (deg <= 180) {
+      $activeBorder.css('background-image',
+        'linear-gradient(' + (90 + deg) + 'deg, transparent 50%, ' + fillColor + ' 50%),' +
+        'linear-gradient(90deg, ' + fillColor + ' 50%, transparent 50%)')
+        .css('border', '2px solid' + backgroundColor)
+        .css('background-color', progressColorString);
+    } else {
+      $activeBorder.css('background-image',
+        'linear-gradient(' + (deg - 90) + 'deg, transparent 50%, ' + progressColorString + ' 50%),' +
+        'linear-gradient(90deg, ' + fillColor + ' 50%, transparent 50%)')
+        .css('border', '2px solid' + backgroundColor)
+        .css('background-color', progressColorString);
+    }
+
+    this.$activeBorder = $activeBorder;
+    this.$backgroundCircle = $backgroundCircle;
+    this.$wrapper = $wrapper;
+
+    this.initResizeFunctionality();
+
+    return $wrapper;
+  }
+
+  /**
+   * Initializes resize functionality for the progress circle
+   */
+  ProgressCircle.prototype.initResizeFunctionality = function () {
+    var self = this;
+
+    $(window).resize(function () {
+      // Queue resize
+      setTimeout(function () {
+        self.resize();
+      });
+    });
+
+    // First resize
+    setTimeout(function () {
+      self.resize();
+    }, 0);
+  };
+
+  /**
+   * Resize function makes progress circle grow or shrink relative to parent container
+   */
+  ProgressCircle.prototype.resize = function () {
+    var $parent = this.$wrapper.parent();
+
+    if ($parent !== undefined && $parent) {
+
+      // Measurements
+      var fontSize = parseInt($parent.css('font-size'), 10);
+
+      // Static sizes
+      var fontSizeMultiplum = 3.75;
+      var progressCircleWidthPx = parseInt((fontSize / 4.5), 10) % 2 === 0 ? parseInt((fontSize / 4.5), 10) + 4 : parseInt((fontSize / 4.5), 10) + 5;
+      var progressCircleOffset = progressCircleWidthPx / 2;
+
+      var width = fontSize * fontSizeMultiplum;
+      var height = fontSize * fontSizeMultiplum;
+      this.$activeBorder.css({
+        'width': width,
+        'height': height
+      });
+
+      this.$backgroundCircle.css({
+        'width': width - progressCircleWidthPx,
+        'height': height - progressCircleWidthPx,
+        'top': progressCircleOffset,
+        'left': progressCircleOffset
+      });
+    }
+  };
+
+  /**
+   * Hex to RGB conversion
+   * @param hex
+   * @returns {{r: Number, g: Number, b: Number}}
+   */
+  ProgressCircle.prototype.hexToRgb = function (hex) {
+    var result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result ? {
+      r: parseInt(result[1], 16),
+      g: parseInt(result[2], 16),
+      b: parseInt(result[3], 16)
+    } : null;
+  };
+
+  return ProgressCircle;
+
+}(H5P.jQuery));
+;
+var H5P = H5P || {};
+
+H5P.SimpleRoundedButton = (function ($) {
+
+  /**
+   * Creates a new tip
+   */
+  function SimpleRoundedButton(text) {
+
+    var $simpleRoundedButton = $('<div>', {
+      'class': 'joubel-simple-rounded-button',
+      'title': text,
+      'role': 'button',
+      'tabindex': '0'
+    }).keydown(function (e) {
+      // 32 - space, 13 - enter
+      if ([32, 13].indexOf(e.which) !== -1) {
+        $(this).click();
+        e.preventDefault();
+      }
+    });
+
+    $('<span>', {
+      'class': 'joubel-simple-rounded-button-text',
+      'html': text
+    }).appendTo($simpleRoundedButton);
+
+    return $simpleRoundedButton;
+  }
+
+  return SimpleRoundedButton;
+}(H5P.jQuery));
+;
+var H5P = H5P || {};
+
+/**
+ * Class responsible for creating speech bubbles
+ */
+H5P.JoubelSpeechBubble = (function ($) {
+
+  var $currentSpeechBubble;
+  var $currentContainer;  
+  var $tail;
+  var $innerTail;
+  var removeSpeechBubbleTimeout;
+  var currentMaxWidth;
+
+  var DEFAULT_MAX_WIDTH = 400;
+
+  var iDevice = navigator.userAgent.match(/iPod|iPhone|iPad/g) ? true : false;
+
+  /**
+   * Creates a new speech bubble
+   *
+   * @param {H5P.jQuery} $container The speaking object
+   * @param {string} text The text to display
+   * @param {number} maxWidth The maximum width of the bubble
+   * @return {H5P.JoubelSpeechBubble}
+   */
+  function JoubelSpeechBubble($container, text, maxWidth) {
+    maxWidth = maxWidth || DEFAULT_MAX_WIDTH;
+    currentMaxWidth = maxWidth;
+    $currentContainer = $container;
+
+    this.isCurrent = function ($tip) {
+      return $tip.is($currentContainer);
+    };
+
+    this.remove = function () {
+      remove();
+    };
+
+    var fadeOutSpeechBubble = function ($speechBubble) {
+      if (!$speechBubble) {
+        return;
+      }
+
+      // Stop removing bubble
+      clearTimeout(removeSpeechBubbleTimeout);
+
+      $speechBubble.removeClass('show');
+      setTimeout(function () {
+        if ($speechBubble) {
+          $speechBubble.remove();
+          $speechBubble = undefined;
+        }
+      }, 500);
+    };
+
+    if ($currentSpeechBubble !== undefined) {
+      remove();
+    }
+
+    var $h5pContainer = getH5PContainer($container);
+
+    // Make sure we fade out old speech bubble
+    fadeOutSpeechBubble($currentSpeechBubble);
+
+    // Create bubble
+    $tail = $('<div class="joubel-speech-bubble-tail"></div>');
+    $innerTail = $('<div class="joubel-speech-bubble-inner-tail"></div>');
+    var $innerBubble = $(
+      '<div class="joubel-speech-bubble-inner">' +
+      '<div class="joubel-speech-bubble-text">' + text + '</div>' +
+      '</div>'
+    ).prepend($innerTail);
+
+    $currentSpeechBubble = $(
+      '<div class="joubel-speech-bubble" aria-live="assertive">'
+    ).append([$tail, $innerBubble])
+      .appendTo($h5pContainer);
+
+    // Show speech bubble with transition
+    setTimeout(function () {
+      $currentSpeechBubble.addClass('show');
+    }, 0);
+
+    position($currentSpeechBubble, $currentContainer, maxWidth, $tail, $innerTail);
+
+    // Handle click to close
+    H5P.$body.on('mousedown.speechBubble', handleOutsideClick);
+
+    // Handle window resizing
+    H5P.$window.on('resize', '', handleResize);
+
+    // Handle clicks when inside IV which blocks bubbling.
+    $container.parents('.h5p-dialog')
+      .on('mousedown.speechBubble', handleOutsideClick);
+
+    if (iDevice) {
+      H5P.$body.css('cursor', 'pointer');
+    }
+
+    return this;
+  }
+
+  // Remove speechbubble if it belongs to a dom element that is about to be hidden
+  H5P.externalDispatcher.on('domHidden', function (event) {
+    if ($currentSpeechBubble !== undefined && event.data.$dom.find($currentContainer).length !== 0) {
+      remove();
+    }
+  });
+
+  /**
+   * Returns the closest h5p container for the given DOM element.
+   * 
+   * @param {object} $container jquery element
+   * @return {object} the h5p container (jquery element)
+   */
+  function getH5PContainer($container) {
+    var $h5pContainer = $container.closest('.h5p-frame');
+
+    // Check closest h5p frame first, then check for container in case there is no frame.
+    if (!$h5pContainer.length) {
+      $h5pContainer = $container.closest('.h5p-container');
+    }
+
+    return $h5pContainer;
+  }
+
+  /**
+   * Event handler that is called when the window is resized.
+   */
+  function handleResize() {
+    position($currentSpeechBubble, $currentContainer, currentMaxWidth, $tail, $innerTail);
+  }
+
+  /**
+   * Repositions the speech bubble according to the position of the container.
+   * 
+   * @param {object} $currentSpeechbubble the speech bubble that should be positioned   
+   * @param {object} $container the container to which the speech bubble should point 
+   * @param {number} maxWidth the maximum width of the speech bubble
+   * @param {object} $tail the tail (the triangle that points to the referenced container)
+   * @param {object} $innerTail the inner tail (the triangle that points to the referenced container)
+   */
+  function position($currentSpeechBubble, $container, maxWidth, $tail, $innerTail) {
+    var $h5pContainer = getH5PContainer($container);
+
+    // Calculate offset between the button and the h5p frame
+    var offset = getOffsetBetween($h5pContainer, $container);
+
+    var direction = (offset.bottom > offset.top ? 'bottom' : 'top');
+    var tipWidth = offset.outerWidth * 0.9; // Var needs to be renamed to make sense
+    var bubbleWidth = tipWidth > maxWidth ? maxWidth : tipWidth;
+
+    var bubblePosition = getBubblePosition(bubbleWidth, offset);
+    var tailPosition = getTailPosition(bubbleWidth, bubblePosition, offset, $container.width());
+    // Need to set font-size, since element is appended to body.
+    // Using same font-size as parent. In that way it will grow accordingly
+    // when resizing
+    var fontSize = 16;//parseFloat($parent.css('font-size'));
+
+    // Set width and position of speech bubble
+    $currentSpeechBubble.css(bubbleCSS(
+      direction,
+      bubbleWidth,
+      bubblePosition,
+      fontSize
+    ));
+
+    var preparedTailCSS = tailCSS(direction, tailPosition);
+    $tail.css(preparedTailCSS);
+    $innerTail.css(preparedTailCSS);
+  }
+
+  /**
+   * Static function for removing the speechbubble
+   */
+  var remove = function () {
+    H5P.$body.off('mousedown.speechBubble');
+    H5P.$window.off('resize', '', handleResize);
+    $currentContainer.parents('.h5p-dialog').off('mousedown.speechBubble');
+    if (iDevice) {
+      H5P.$body.css('cursor', '');
+    }
+    if ($currentSpeechBubble !== undefined) {
+      // Apply transition, then remove speech bubble
+      $currentSpeechBubble.removeClass('show');
+
+      // Make sure we remove any old timeout before reassignment
+      clearTimeout(removeSpeechBubbleTimeout);
+      removeSpeechBubbleTimeout = setTimeout(function () {
+        $currentSpeechBubble.remove();
+        $currentSpeechBubble = undefined;
+      }, 500);
+    }
+    // Don't return false here. If the user e.g. clicks a button when the bubble is visible,
+    // we want the bubble to disapear AND the button to receive the event
+  };
+
+  /**
+   * Remove the speech bubble and container reference
+   */
+  function handleOutsideClick(event) {
+    if (event.target === $currentContainer[0]) {
+      return; // Button clicks are not outside clicks
+    }
+
+    remove();
+    // There is no current container when a container isn't clicked
+    $currentContainer = undefined;
+  }
+
+  /**
+   * Calculate position for speech bubble
+   *
+   * @param {number} bubbleWidth The width of the speech bubble
+   * @param {object} offset
+   * @return {object} Return position for the speech bubble
+   */
+  function getBubblePosition(bubbleWidth, offset) {
+    var bubblePosition = {};
+
+    var tailOffset = 9;
+    var widthOffset = bubbleWidth / 2;
+
+    // Calculate top position
+    bubblePosition.top = offset.top + offset.innerHeight;
+
+    // Calculate bottom position
+    bubblePosition.bottom = offset.bottom + offset.innerHeight + tailOffset;
+
+    // Calculate left position
+    if (offset.left < widthOffset) {
+      bubblePosition.left = 3;
+    }
+    else if ((offset.left + widthOffset) > offset.outerWidth) {
+      bubblePosition.left = offset.outerWidth - bubbleWidth - 3;
+    }
+    else {
+      bubblePosition.left = offset.left - widthOffset + (offset.innerWidth / 2);
+    }
+
+    return bubblePosition;
+  }
+
+  /**
+   * Calculate position for speech bubble tail
+   *
+   * @param {number} bubbleWidth The width of the speech bubble
+   * @param {object} bubblePosition Speech bubble position
+   * @param {object} offset
+   * @param {number} iconWidth The width of the tip icon
+   * @return {object} Return position for the tail
+   */
+  function getTailPosition(bubbleWidth, bubblePosition, offset, iconWidth) {
+    var tailPosition = {};
+    // Magic numbers. Tuned by hand so that the tail fits visually within
+    // the bounds of the speech bubble.
+    var leftBoundary = 9;
+    var rightBoundary = bubbleWidth - 20;
+
+    tailPosition.left = offset.left - bubblePosition.left + (iconWidth / 2) - 6;
+    if (tailPosition.left < leftBoundary) {
+      tailPosition.left = leftBoundary;
+    }
+    if (tailPosition.left > rightBoundary) {
+      tailPosition.left = rightBoundary;
+    }
+
+    tailPosition.top = -6;
+    tailPosition.bottom = -6;
+
+    return tailPosition;
+  }
+
+  /**
+   * Return bubble CSS for the desired growth direction
+   *
+   * @param {string} direction The direction the speech bubble will grow
+   * @param {number} width The width of the speech bubble
+   * @param {object} position Speech bubble position
+   * @param {number} fontSize The size of the bubbles font
+   * @return {object} Return CSS
+   */
+  function bubbleCSS(direction, width, position, fontSize) {
+    if (direction === 'top') {
+      return {
+        width: width + 'px',
+        bottom: position.bottom + 'px',
+        left: position.left + 'px',
+        fontSize: fontSize + 'px',
+        top: ''
+      };
+    }
+    else {
+      return {
+        width: width + 'px',
+        top: position.top + 'px',
+        left: position.left + 'px',
+        fontSize: fontSize + 'px',
+        bottom: ''
+      };
+    }
+  }
+
+  /**
+   * Return tail CSS for the desired growth direction
+   *
+   * @param {string} direction The direction the speech bubble will grow
+   * @param {object} position Tail position
+   * @return {object} Return CSS
+   */
+  function tailCSS(direction, position) {
+    if (direction === 'top') {
+      return {
+        bottom: position.bottom + 'px',
+        left: position.left + 'px',
+        top: ''
+      };
+    }
+    else {
+      return {
+        top: position.top + 'px',
+        left: position.left + 'px',
+        bottom: ''
+      };
+    }
+  }
+
+  /**
+   * Calculates the offset between an element inside a container and the
+   * container. Only works if all the edges of the inner element are inside the
+   * outer element.
+   * Width/height of the elements is included as a convenience.
+   *
+   * @param {H5P.jQuery} $outer
+   * @param {H5P.jQuery} $inner
+   * @return {object} Position offset
+   */
+  function getOffsetBetween($outer, $inner) {
+    var outer = $outer[0].getBoundingClientRect();
+    var inner = $inner[0].getBoundingClientRect();
+
+    return {
+      top: inner.top - outer.top,
+      right: outer.right - inner.right,
+      bottom: outer.bottom - inner.bottom,
+      left: inner.left - outer.left,
+      innerWidth: inner.width,
+      innerHeight: inner.height,
+      outerWidth: outer.width,
+      outerHeight: outer.height
+    };
+  }
+
+  return JoubelSpeechBubble;
+})(H5P.jQuery);
+;
+var H5P = H5P || {};
+
+H5P.JoubelThrobber = (function ($) {
+
+  /**
+   * Creates a new tip
+   */
+  function JoubelThrobber() {
+
+    // h5p-throbber css is described in core
+    var $throbber = $('<div/>', {
+      'class': 'h5p-throbber'
+    });
+
+    return $throbber;
+  }
+
+  return JoubelThrobber;
+}(H5P.jQuery));
+;
+H5P.JoubelTip = (function ($) {
+  var $conv = $('<div/>');
+
+  /**
+   * Creates a new tip element.
+   *
+   * NOTE that this may look like a class but it doesn't behave like one.
+   * It returns a jQuery object.
+   *
+   * @param {string} tipHtml The text to display in the popup
+   * @param {Object} [behaviour] Options
+   * @param {string} [behaviour.tipLabel] Set to use a custom label for the tip button (you want this for good A11Y)
+   * @param {boolean} [behaviour.helpIcon] Set to 'true' to Add help-icon classname to Tip button (changes the icon)
+   * @param {boolean} [behaviour.showSpeechBubble] Set to 'false' to disable functionality (you may this in the editor)
+   * @param {boolean} [behaviour.tabcontrol] Set to 'true' if you plan on controlling the tabindex in the parent (tabindex="-1")
+   * @return {H5P.jQuery|undefined} Tip button jQuery element or 'undefined' if invalid tip
+   */
+  function JoubelTip(tipHtml, behaviour) {
+
+    // Keep track of the popup that appears when you click the Tip button
+    var speechBubble;
+
+    // Parse tip html to determine text
+    var tipText = $conv.html(tipHtml).text().trim();
+    if (tipText === '') {
+      return; // The tip has no textual content, i.e. it's invalid.
+    }
+
+    // Set default behaviour
+    behaviour = $.extend({
+      tipLabel: tipText,
+      helpIcon: false,
+      showSpeechBubble: true,
+      tabcontrol: false
+    }, behaviour);
+
+    // Create Tip button
+    var $tipButton = $('<div/>', {
+      class: 'joubel-tip-container' + (behaviour.showSpeechBubble ? '' : ' be-quiet'),
+      'aria-label': behaviour.tipLabel,
+      'aria-expanded': false,
+      role: 'button',
+      tabindex: (behaviour.tabcontrol ? -1 : 0),
+      click: function (event) {
+        // Toggle show/hide popup
+        toggleSpeechBubble();
+        event.preventDefault();
+      },
+      keydown: function (event) {
+        if (event.which === 32 || event.which === 13) { // Space & enter key
+          // Toggle show/hide popup
+          toggleSpeechBubble();
+          event.stopPropagation();
+          event.preventDefault();
+        }
+        else { // Any other key
+          // Toggle hide popup
+          toggleSpeechBubble(false);
+        }
+      },
+      // Add markup to render icon
+      html: '<span class="joubel-icon-tip-normal ' + (behaviour.helpIcon ? ' help-icon': '') + '">' +
+              '<span class="h5p-icon-shadow"></span>' +
+              '<span class="h5p-icon-speech-bubble"></span>' +
+              '<span class="h5p-icon-info"></span>' +
+            '</span>'
+      // IMPORTANT: All of the markup elements must have 'pointer-events: none;'
+    });
+
+    const $tipAnnouncer = $('<div>', {
+      'class': 'hidden-but-read',
+      'aria-live': 'polite',
+      appendTo: $tipButton,
+    });
+
+    /**
+     * Tip button interaction handler.
+     * Toggle show or hide the speech bubble popup when interacting with the
+     * Tip button.
+     *
+     * @private
+     * @param {boolean} [force] 'true' shows and 'false' hides.
+     */
+    var toggleSpeechBubble = function (force) {
+      if (speechBubble !== undefined && speechBubble.isCurrent($tipButton)) {
+        // Hide current popup
+        speechBubble.remove();
+        speechBubble = undefined;
+
+        $tipButton.attr('aria-expanded', false);
+        $tipAnnouncer.html('');
+      }
+      else if (force !== false && behaviour.showSpeechBubble) {
+        // Create and show new popup
+        speechBubble = H5P.JoubelSpeechBubble($tipButton, tipHtml);
+        $tipButton.attr('aria-expanded', true);
+        $tipAnnouncer.html(tipHtml);
+      }
+    };
+
+    return $tipButton;
+  }
+
+  return JoubelTip;
+})(H5P.jQuery);
+;
+var H5P = H5P || {};
+
+H5P.JoubelSlider = (function ($) {
+
+  /**
+   * Creates a new Slider
+   *
+   * @param {object} [params] Additional parameters
+   */
+  function JoubelSlider(params) {
+    H5P.EventDispatcher.call(this);
+
+    this.$slider = $('<div>', $.extend({
+      'class': 'h5p-joubel-ui-slider'
+    }, params));
+
+    this.$slides = [];
+    this.currentIndex = 0;
+    this.numSlides = 0;
+  }
+  JoubelSlider.prototype = Object.create(H5P.EventDispatcher.prototype);
+  JoubelSlider.prototype.constructor = JoubelSlider;
+
+  JoubelSlider.prototype.addSlide = function ($content) {
+    $content.addClass('h5p-joubel-ui-slide').css({
+      'left': (this.numSlides*100) + '%'
+    });
+    this.$slider.append($content);
+    this.$slides.push($content);
+
+    this.numSlides++;
+
+    if(this.numSlides === 1) {
+      $content.addClass('current');
+    }
+  };
+
+  JoubelSlider.prototype.attach = function ($container) {
+    $container.append(this.$slider);
+  };
+
+  JoubelSlider.prototype.move = function (index) {
+    var self = this;
+
+    if(index === 0) {
+      self.trigger('first-slide');
+    }
+    if(index+1 === self.numSlides) {
+      self.trigger('last-slide');
+    }
+    self.trigger('move');
+
+    var $previousSlide = self.$slides[this.currentIndex];
+    H5P.Transition.onTransitionEnd(this.$slider, function () {
+      $previousSlide.removeClass('current');
+      self.trigger('moved');
+    });
+    this.$slides[index].addClass('current');
+
+    var translateX = 'translateX(' + (-index*100) + '%)';
+    this.$slider.css({
+      '-webkit-transform': translateX,
+      '-moz-transform': translateX,
+      '-ms-transform': translateX,
+      'transform': translateX
+    });
+
+    this.currentIndex = index;
+  };
+
+  JoubelSlider.prototype.remove = function () {
+    this.$slider.remove();
+  };
+
+  JoubelSlider.prototype.next = function () {
+    if(this.currentIndex+1 >= this.numSlides) {
+      return;
+    }
+
+    this.move(this.currentIndex+1);
+  };
+
+  JoubelSlider.prototype.previous = function () {
+    this.move(this.currentIndex-1);
+  };
+
+  JoubelSlider.prototype.first = function () {
+    this.move(0);
+  };
+
+  JoubelSlider.prototype.last = function () {
+    this.move(this.numSlides-1);
+  };
+
+  return JoubelSlider;
+})(H5P.jQuery);
+;
+var H5P = H5P || {};
+
+/**
+ * @module
+ */
+H5P.JoubelScoreBar = (function ($) {
+
+  /* Need to use an id for the star SVG since that is the only way to reference
+     SVG filters  */
+  var idCounter = 0;
+
+  /**
+   * Creates a score bar
+   * @class H5P.JoubelScoreBar
+   * @param {number} maxScore  Maximum score
+   * @param {string} [label] Makes it easier for readspeakers to identify the scorebar
+   * @param {string} [helpText] Score explanation
+   * @param {string} [scoreExplanationButtonLabel] Label for score explanation button
+   */
+  function JoubelScoreBar(maxScore, label, helpText, scoreExplanationButtonLabel) {
+    var self = this;
+
+    self.maxScore = maxScore;
+    self.score = 0;
+    idCounter++;
+
+    /**
+     * @const {string}
+     */
+    self.STAR_MARKUP = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 63.77 53.87" aria-hidden="true" focusable="false">' +
+        '<title>star</title>' +
+        '<filter id="h5p-joubelui-score-bar-star-inner-shadow-' + idCounter + '" x0="-50%" y0="-50%" width="200%" height="200%">' +
+          '<feGaussianBlur in="SourceAlpha" stdDeviation="3" result="blur"></feGaussianBlur>' +
+          '<feOffset dy="2" dx="4"></feOffset>' +
+          '<feComposite in2="SourceAlpha" operator="arithmetic" k2="-1" k3="1" result="shadowDiff"></feComposite>' +
+          '<feFlood flood-color="#ffe95c" flood-opacity="1"></feFlood>' +
+          '<feComposite in2="shadowDiff" operator="in"></feComposite>' +
+          '<feComposite in2="SourceGraphic" operator="over" result="firstfilter"></feComposite>' +
+          '<feGaussianBlur in="firstfilter" stdDeviation="3" result="blur2"></feGaussianBlur>' +
+          '<feOffset dy="-2" dx="-4"></feOffset>' +
+          '<feComposite in2="firstfilter" operator="arithmetic" k2="-1" k3="1" result="shadowDiff"></feComposite>' +
+          '<feFlood flood-color="#ffe95c" flood-opacity="1"></feFlood>' +
+          '<feComposite in2="shadowDiff" operator="in"></feComposite>' +
+          '<feComposite in2="firstfilter" operator="over"></feComposite>' +
+        '</filter>' +
+        '<path class="h5p-joubelui-score-bar-star-shadow" d="M35.08,43.41V9.16H20.91v0L9.51,10.85,9,10.93C2.8,12.18,0,17,0,21.25a11.22,11.22,0,0,0,3,7.48l8.73,8.53-1.07,6.16Z"/>' +
+        '<g>' +
+          '<path class="h5p-joubelui-score-bar-star-border" d="M61.36,22.8,49.72,34.11l2.78,16a2.6,2.6,0,0,1,.05.64c0,.85-.37,1.6-1.33,1.6A2.74,2.74,0,0,1,49.94,52L35.58,44.41,21.22,52a2.93,2.93,0,0,1-1.28.37c-.91,0-1.33-.75-1.33-1.6,0-.21.05-.43.05-.64l2.78-16L9.8,22.8A2.57,2.57,0,0,1,9,21.25c0-1,1-1.33,1.81-1.49l16.07-2.35L34.09,2.83c.27-.59.85-1.33,1.55-1.33s1.28.69,1.55,1.33l7.21,14.57,16.07,2.35c.75.11,1.81.53,1.81,1.49A3.07,3.07,0,0,1,61.36,22.8Z"/>' +
+          '<path class="h5p-joubelui-score-bar-star-fill" d="M61.36,22.8,49.72,34.11l2.78,16a2.6,2.6,0,0,1,.05.64c0,.85-.37,1.6-1.33,1.6A2.74,2.74,0,0,1,49.94,52L35.58,44.41,21.22,52a2.93,2.93,0,0,1-1.28.37c-.91,0-1.33-.75-1.33-1.6,0-.21.05-.43.05-.64l2.78-16L9.8,22.8A2.57,2.57,0,0,1,9,21.25c0-1,1-1.33,1.81-1.49l16.07-2.35L34.09,2.83c.27-.59.85-1.33,1.55-1.33s1.28.69,1.55,1.33l7.21,14.57,16.07,2.35c.75.11,1.81.53,1.81,1.49A3.07,3.07,0,0,1,61.36,22.8Z"/>' +
+          '<path filter="url(#h5p-joubelui-score-bar-star-inner-shadow-' + idCounter + ')" class="h5p-joubelui-score-bar-star-fill-full-score" d="M61.36,22.8,49.72,34.11l2.78,16a2.6,2.6,0,0,1,.05.64c0,.85-.37,1.6-1.33,1.6A2.74,2.74,0,0,1,49.94,52L35.58,44.41,21.22,52a2.93,2.93,0,0,1-1.28.37c-.91,0-1.33-.75-1.33-1.6,0-.21.05-.43.05-.64l2.78-16L9.8,22.8A2.57,2.57,0,0,1,9,21.25c0-1,1-1.33,1.81-1.49l16.07-2.35L34.09,2.83c.27-.59.85-1.33,1.55-1.33s1.28.69,1.55,1.33l7.21,14.57,16.07,2.35c.75.11,1.81.53,1.81,1.49A3.07,3.07,0,0,1,61.36,22.8Z"/>' +
+        '</g>' +
+      '</svg>';
+
+    /**
+     * @function appendTo
+     * @memberOf H5P.JoubelScoreBar#
+     * @param {H5P.jQuery}  $wrapper  Dom container
+     */
+    self.appendTo = function ($wrapper) {
+      self.$scoreBar.appendTo($wrapper);
+    };
+
+    /**
+     * Create the text representation of the scorebar .
+     *
+     * @private
+     * @return {string}
+     */
+    var createLabel = function (score) {
+      if (!label) {
+        return '';
+      }
+
+      return label.replace(':num', score).replace(':total', self.maxScore);
+    };
+
+    /**
+     * Creates the html for this widget
+     *
+     * @method createHtml
+     * @private
+     */
+    var createHtml = function () {
+      // Container div
+      self.$scoreBar = $('<div>', {
+        'class': 'h5p-joubelui-score-bar',
+      });
+
+      var $visuals = $('<div>', {
+        'class': 'h5p-joubelui-score-bar-visuals',
+        appendTo: self.$scoreBar
+      });
+
+      // The progress bar wrapper
+      self.$progressWrapper = $('<div>', {
+        'class': 'h5p-joubelui-score-bar-progress-wrapper',
+        appendTo: $visuals
+      });
+
+      self.$progress = $('<div>', {
+        'class': 'h5p-joubelui-score-bar-progress',
+        'html': createLabel(self.score),
+        appendTo: self.$progressWrapper
+      });
+
+      // The star
+      $('<div>', {
+        'class': 'h5p-joubelui-score-bar-star',
+        html: self.STAR_MARKUP
+      }).appendTo($visuals);
+
+      // The score container
+      var $numerics = $('<div>', {
+        'class': 'h5p-joubelui-score-numeric',
+        appendTo: self.$scoreBar,
+        'aria-hidden': true
+      });
+
+      // The current score
+      self.$scoreCounter = $('<span>', {
+        'class': 'h5p-joubelui-score-number h5p-joubelui-score-number-counter',
+        text: 0,
+        appendTo: $numerics
+      });
+
+      // The separator
+      $('<span>', {
+        'class': 'h5p-joubelui-score-number-separator',
+        text: '/',
+        appendTo: $numerics
+      });
+
+      // Max score
+      self.$maxScore = $('<span>', {
+        'class': 'h5p-joubelui-score-number h5p-joubelui-score-max',
+        text: self.maxScore,
+        appendTo: $numerics
+      });
+
+      if (helpText) {
+        H5P.JoubelUI.createTip(helpText, {
+          tipLabel: scoreExplanationButtonLabel ? scoreExplanationButtonLabel : helpText,
+          helpIcon: true
+        }).appendTo(self.$scoreBar);
+        self.$scoreBar.addClass('h5p-score-bar-has-help');
+      }
+    };
+
+    /**
+     * Set the current score
+     * @method setScore
+     * @memberOf H5P.JoubelScoreBar#
+     * @param  {number} score
+     */
+    self.setScore = function (score) {
+      // Do nothing if score hasn't changed
+      if (score === self.score) {
+        return;
+      }
+      self.score = score > self.maxScore ? self.maxScore : score;
+      self.updateVisuals();
+    };
+
+    /**
+     * Increment score
+     * @method incrementScore
+     * @memberOf H5P.JoubelScoreBar#
+     * @param  {number=}        incrementBy Optional parameter, defaults to 1
+     */
+    self.incrementScore = function (incrementBy) {
+      self.setScore(self.score + (incrementBy || 1));
+    };
+
+    /**
+     * Set the max score
+     * @method setMaxScore
+     * @memberOf H5P.JoubelScoreBar#
+     * @param  {number}    maxScore The max score
+     */
+    self.setMaxScore = function (maxScore) {
+      self.maxScore = maxScore;
+    };
+
+    /**
+     * Updates the progressbar visuals
+     * @memberOf H5P.JoubelScoreBar#
+     * @method updateVisuals
+     */
+    self.updateVisuals = function () {
+      self.$progress.html(createLabel(self.score));
+      self.$scoreCounter.text(self.score);
+      self.$maxScore.text(self.maxScore);
+
+      setTimeout(function () {
+        // Start the progressbar animation
+        self.$progress.css({
+          width: ((self.score / self.maxScore) * 100) + '%'
+        });
+
+        H5P.Transition.onTransitionEnd(self.$progress, function () {
+          // If fullscore fill the star and start the animation
+          self.$scoreBar.toggleClass('h5p-joubelui-score-bar-full-score', self.score === self.maxScore);
+          self.$scoreBar.toggleClass('h5p-joubelui-score-bar-animation-active', self.score === self.maxScore);
+
+          // Only allow the star animation to run once
+          self.$scoreBar.one("animationend", function() {
+            self.$scoreBar.removeClass("h5p-joubelui-score-bar-animation-active");
+          });
+        }, 600);
+      }, 300);
+    };
+
+    /**
+     * Removes all classes
+     * @method reset
+     */
+    self.reset = function () {
+      self.$scoreBar.removeClass('h5p-joubelui-score-bar-full-score');
+    };
+
+    createHtml();
+  }
+
+  return JoubelScoreBar;
+})(H5P.jQuery);
+;
+var H5P = H5P || {};
+
+H5P.JoubelProgressbar = (function ($) {
+
+  /**
+   * Joubel progressbar class
+   * @method JoubelProgressbar
+   * @constructor
+   * @param  {number}          steps Number of steps
+   * @param {Object} [options] Additional options
+   * @param {boolean} [options.disableAria] Disable readspeaker assistance
+   * @param {string} [options.progressText] A progress text for describing
+   *  current progress out of total progress for readspeakers.
+   *  e.g. "Slide :num of :total"
+   */
+  function JoubelProgressbar(steps, options) {
+    H5P.EventDispatcher.call(this);
+    var self = this;
+    this.options = $.extend({
+      progressText: 'Slide :num of :total'
+    }, options);
+    this.currentStep = 0;
+    this.steps = steps;
+
+    this.$progressbar = $('<div>', {
+      'class': 'h5p-joubelui-progressbar'
+    });
+    this.$background = $('<div>', {
+      'class': 'h5p-joubelui-progressbar-background'
+    }).appendTo(this.$progressbar);
+  }
+
+  JoubelProgressbar.prototype = Object.create(H5P.EventDispatcher.prototype);
+  JoubelProgressbar.prototype.constructor = JoubelProgressbar;
+
+  JoubelProgressbar.prototype.updateAria = function () {
+    var self = this;
+    if (this.options.disableAria) {
+      return;
+    }
+
+    if (!this.$currentStatus) {
+      this.$currentStatus = $('<div>', {
+        'class': 'h5p-joubelui-progressbar-slide-status-text',
+        'aria-live': 'assertive'
+      }).appendTo(this.$progressbar);
+    }
+    var interpolatedProgressText = self.options.progressText
+      .replace(':num', self.currentStep)
+      .replace(':total', self.steps);
+    this.$currentStatus.html(interpolatedProgressText);
+  };
+
+  /**
+   * Appends to a container
+   * @method appendTo
+   * @param  {H5P.jquery} $container
+   */
+  JoubelProgressbar.prototype.appendTo = function ($container) {
+    this.$progressbar.appendTo($container);
+  };
+
+  /**
+   * Update progress
+   * @method setProgress
+   * @param  {number}    step
+   */
+  JoubelProgressbar.prototype.setProgress = function (step) {
+    // Check for valid value:
+    if (step > this.steps || step < 0) {
+      return;
+    }
+    this.currentStep = step;
+    this.$background.css({
+      width: ((this.currentStep/this.steps)*100) + '%'
+    });
+
+    this.updateAria();
+  };
+
+  /**
+   * Increment progress with 1
+   * @method next
+   */
+  JoubelProgressbar.prototype.next = function () {
+    this.setProgress(this.currentStep+1);
+  };
+
+  /**
+   * Reset progressbar
+   * @method reset
+   */
+  JoubelProgressbar.prototype.reset = function () {
+    this.setProgress(0);
+  };
+
+  /**
+   * Check if last step is reached
+   * @method isLastStep
+   * @return {Boolean}
+   */
+  JoubelProgressbar.prototype.isLastStep = function () {
+    return this.steps === this.currentStep;
+  };
+
+  return JoubelProgressbar;
+})(H5P.jQuery);
+;
+var H5P = H5P || {};
+
+/**
+ * H5P Joubel UI library.
+ *
+ * This is a utility library, which does not implement attach. I.e, it has to bee actively used by
+ * other libraries
+ * @module
+ */
+H5P.JoubelUI = (function ($) {
+
+  /**
+   * The internal object to return
+   * @class H5P.JoubelUI
+   * @static
+   */
+  function JoubelUI() {}
+
+  /* Public static functions */
+
+  /**
+   * Create a tip icon
+   * @method H5P.JoubelUI.createTip
+   * @param  {string}  text   The textual tip
+   * @param  {Object}  params Parameters
+   * @return {H5P.JoubelTip}
+   */
+  JoubelUI.createTip = function (text, params) {
+    return new H5P.JoubelTip(text, params);
+  };
+
+  /**
+   * Create message dialog
+   * @method H5P.JoubelUI.createMessageDialog
+   * @param  {H5P.jQuery}               $container The dom container
+   * @param  {string}                   message    The message
+   * @return {H5P.JoubelMessageDialog}
+   */
+  JoubelUI.createMessageDialog = function ($container, message) {
+    return new H5P.JoubelMessageDialog($container, message);
+  };
+
+  /**
+   * Create help text dialog
+   * @method H5P.JoubelUI.createHelpTextDialog
+   * @param  {string}             header  The textual header
+   * @param  {string}             message The textual message
+   * @param  {string}             closeButtonTitle The title for the close button
+   * @return {H5P.JoubelHelpTextDialog}
+   */
+  JoubelUI.createHelpTextDialog = function (header, message, closeButtonTitle) {
+    return new H5P.JoubelHelpTextDialog(header, message, closeButtonTitle);
+  };
+
+  /**
+   * Create progress circle
+   * @method H5P.JoubelUI.createProgressCircle
+   * @param  {number}             number          The progress (0 to 100)
+   * @param  {string}             progressColor   The progress color in hex value
+   * @param  {string}             fillColor       The fill color in hex value
+   * @param  {string}             backgroundColor The background color in hex value
+   * @return {H5P.JoubelProgressCircle}
+   */
+  JoubelUI.createProgressCircle = function (number, progressColor, fillColor, backgroundColor) {
+    return new H5P.JoubelProgressCircle(number, progressColor, fillColor, backgroundColor);
+  };
+
+  /**
+   * Create throbber for loading
+   * @method H5P.JoubelUI.createThrobber
+   * @return {H5P.JoubelThrobber}
+   */
+  JoubelUI.createThrobber = function () {
+    return new H5P.JoubelThrobber();
+  };
+
+  /**
+   * Create simple rounded button
+   * @method H5P.JoubelUI.createSimpleRoundedButton
+   * @param  {string}                  text The button label
+   * @return {H5P.SimpleRoundedButton}
+   */
+  JoubelUI.createSimpleRoundedButton = function (text) {
+    return new H5P.SimpleRoundedButton(text);
+  };
+
+  /**
+   * Create Slider
+   * @method H5P.JoubelUI.createSlider
+   * @param  {Object} [params] Parameters
+   * @return {H5P.JoubelSlider}
+   */
+  JoubelUI.createSlider = function (params) {
+    return new H5P.JoubelSlider(params);
+  };
+
+  /**
+   * Create Score Bar
+   * @method H5P.JoubelUI.createScoreBar
+   * @param  {number=}       maxScore The maximum score
+   * @param {string} [label] Makes it easier for readspeakers to identify the scorebar
+   * @return {H5P.JoubelScoreBar}
+   */
+  JoubelUI.createScoreBar = function (maxScore, label, helpText, scoreExplanationButtonLabel) {
+    return new H5P.JoubelScoreBar(maxScore, label, helpText, scoreExplanationButtonLabel);
+  };
+
+  /**
+   * Create Progressbar
+   * @method H5P.JoubelUI.createProgressbar
+   * @param  {number=}       numSteps The total numer of steps
+   * @param {Object} [options] Additional options
+   * @param {boolean} [options.disableAria] Disable readspeaker assistance
+   * @param {string} [options.progressText] A progress text for describing
+   *  current progress out of total progress for readspeakers.
+   *  e.g. "Slide :num of :total"
+   * @return {H5P.JoubelProgressbar}
+   */
+  JoubelUI.createProgressbar = function (numSteps, options) {
+    return new H5P.JoubelProgressbar(numSteps, options);
+  };
+
+  /**
+   * Create standard Joubel button
+   *
+   * @method H5P.JoubelUI.createButton
+   * @param {object} params
+   *  May hold any properties allowed by jQuery. If href is set, an A tag
+   *  is used, if not a button tag is used.
+   * @return {H5P.jQuery} The jquery element created
+   */
+  JoubelUI.createButton = function(params) {
+    var type = 'button';
+    if (params.href) {
+      type = 'a';
+    }
+    else {
+      params.type = 'button';
+    }
+    if (params.class) {
+      params.class += ' h5p-joubelui-button';
+    }
+    else {
+      params.class = 'h5p-joubelui-button';
+    }
+    return $('<' + type + '/>', params);
+  };
+
+  /**
+   * Fix for iframe scoll bug in IOS. When focusing an element that doesn't have
+   * focus support by default the iframe will scroll the parent frame so that
+   * the focused element is out of view. This varies dependening on the elements
+   * of the parent frame.
+   */
+  if (H5P.isFramed && !H5P.hasiOSiframeScrollFix &&
+      /iPad|iPhone|iPod/.test(navigator.userAgent)) {
+    H5P.hasiOSiframeScrollFix = true;
+
+    // Keep track of original focus function
+    var focus = HTMLElement.prototype.focus;
+
+    // Override the original focus
+    HTMLElement.prototype.focus = function () {
+      // Only focus the element if it supports it natively
+      if ( (this instanceof HTMLAnchorElement ||
+            this instanceof HTMLInputElement ||
+            this instanceof HTMLSelectElement ||
+            this instanceof HTMLTextAreaElement ||
+            this instanceof HTMLButtonElement ||
+            this instanceof HTMLIFrameElement ||
+            this instanceof HTMLAreaElement) && // HTMLAreaElement isn't supported by Safari yet.
+          !this.getAttribute('role')) { // Focus breaks if a different role has been set
+          // In theory this.isContentEditable should be able to recieve focus,
+          // but it didn't work when tested.
+
+        // Trigger the original focus with the proper context
+        focus.call(this);
+      }
+    };
+  }
+
+  return JoubelUI;
+})(H5P.jQuery);
+;
+H5P.Question = (function ($, EventDispatcher, JoubelUI) {
+
+  /**
+   * Extending this class make it alot easier to create tasks for other
+   * content types.
+   *
+   * @class H5P.Question
+   * @extends H5P.EventDispatcher
+   * @param {string} type
+   */
+  function Question(type) {
+    var self = this;
+
+    // Inheritance
+    EventDispatcher.call(self);
+
+    // Register default section order
+    self.order = ['video', 'image', 'introduction', 'content', 'explanation', 'feedback', 'scorebar', 'buttons', 'read'];
+
+    // Keep track of registered sections
+    var sections = {};
+
+    // Buttons
+    var buttons = {};
+    var buttonOrder = [];
+
+    // Wrapper when attached
+    var $wrapper;
+
+    // Click element
+    var clickElement;
+
+    // ScoreBar
+    var scoreBar;
+
+    // Keep track of the feedback's visual status.
+    var showFeedback;
+
+    // Keep track of which buttons are scheduled for hiding.
+    var buttonsToHide = [];
+
+    // Keep track of which buttons are scheduled for showing.
+    var buttonsToShow = [];
+
+    // Keep track of the hiding and showing of buttons.
+    var toggleButtonsTimer;
+    var toggleButtonsTransitionTimer;
+    var buttonTruncationTimer;
+
+    // Keeps track of initialization of question
+    var initialized = false;
+
+    /**
+     * @type {Object} behaviour Behaviour of Question
+     * @property {Boolean} behaviour.disableFeedback Set to true to disable feedback section
+     */
+    var behaviour = {
+      disableFeedback: false,
+      disableReadSpeaker: false
+    };
+
+    // Keeps track of thumb state
+    var imageThumb = true;
+
+    // Keeps track of image transitions
+    var imageTransitionTimer;
+
+    // Keep track of whether sections is transitioning.
+    var sectionsIsTransitioning = false;
+
+    // Keep track of auto play state
+    var disableAutoPlay = false;
+
+    // Feedback transition timer
+    var feedbackTransitionTimer;
+
+    // Used when reading messages to the user
+    var $read, readText;
+
+    /**
+     * Register section with given content.
+     *
+     * @private
+     * @param {string} section ID of the section
+     * @param {(string|H5P.jQuery)} [content]
+     */
+    var register = function (section, content) {
+      sections[section] = {};
+      var $e = sections[section].$element = $('<div/>', {
+        'class': 'h5p-question-' + section,
+      });
+      if (content) {
+        $e[content instanceof $ ? 'append' : 'html'](content);
+      }
+    };
+
+    /**
+     * Update registered section with content.
+     *
+     * @private
+     * @param {string} section ID of the section
+     * @param {(string|H5P.jQuery)} content
+     */
+    var update = function (section, content) {
+      if (content instanceof $) {
+        sections[section].$element.html('').append(content);
+      }
+      else {
+        sections[section].$element.html(content);
+      }
+    };
+
+    /**
+     * Insert element with given ID into the DOM.
+     *
+     * @private
+     * @param {array|Array|string[]} order
+     * List with ordered element IDs
+     * @param {string} id
+     * ID of the element to be inserted
+     * @param {Object} elements
+     * Maps ID to the elements
+     * @param {H5P.jQuery} $container
+     * Parent container of the elements
+     */
+    var insert = function (order, id, elements, $container) {
+      // Try to find an element id should be after
+      for (var i = 0; i < order.length; i++) {
+        if (order[i] === id) {
+          // Found our pos
+          while (i > 0 &&
+          (elements[order[i - 1]] === undefined ||
+          !elements[order[i - 1]].isVisible)) {
+            i--;
+          }
+          if (i === 0) {
+            // We are on top.
+            elements[id].$element.prependTo($container);
+          }
+          else {
+            // Add after element
+            elements[id].$element.insertAfter(elements[order[i - 1]].$element);
+          }
+          elements[id].isVisible = true;
+          break;
+        }
+      }
+    };
+
+    /**
+     * Make feedback into a popup and position relative to click.
+     *
+     * @private
+     * @param {string} [closeText] Text for the close button
+     */
+    var makeFeedbackPopup = function (closeText) {
+      var $element = sections.feedback.$element;
+      var $parent = sections.content.$element;
+      var $click = (clickElement != null ? clickElement.$element : null);
+
+      $element.appendTo($parent).addClass('h5p-question-popup');
+
+      if (sections.scorebar) {
+        sections.scorebar.$element.appendTo($element);
+      }
+
+      $parent.addClass('h5p-has-question-popup');
+
+      // Draw the tail
+      var $tail = $('<div/>', {
+        'class': 'h5p-question-feedback-tail'
+      }).hide()
+        .appendTo($parent);
+
+      // Draw the close button
+      var $close = $('<div/>', {
+        'class': 'h5p-question-feedback-close',
+        'tabindex': 0,
+        'title': closeText,
+        on: {
+          click: function (event) {
+            $element.remove();
+            $tail.remove();
+            event.preventDefault();
+          },
+          keydown: function (event) {
+            switch (event.which) {
+              case 13: // Enter
+              case 32: // Space
+                $element.remove();
+                $tail.remove();
+                event.preventDefault();
+            }
+          }
+        }
+      }).hide().appendTo($element);
+
+      if ($click != null) {
+        if ($click.hasClass('correct')) {
+          $element.addClass('h5p-question-feedback-correct');
+          $close.show();
+          sections.buttons.$element.hide();
+        }
+        else {
+          sections.buttons.$element.appendTo(sections.feedback.$element);
+        }
+      }
+
+      positionFeedbackPopup($element, $click);
+    };
+
+    /**
+     * Position the feedback popup.
+     *
+     * @private
+     * @param {H5P.jQuery} $element Feedback div
+     * @param {H5P.jQuery} $click Visual click div
+     */
+    var positionFeedbackPopup = function ($element, $click) {
+      var $container = $element.parent();
+      var $tail = $element.siblings('.h5p-question-feedback-tail');
+      var popupWidth = $element.outerWidth();
+      var popupHeight = setElementHeight($element);
+      var space = 15;
+      var disableTail = false;
+      var positionY = $container.height() / 2 - popupHeight / 2;
+      var positionX = $container.width() / 2 - popupWidth / 2;
+      var tailX = 0;
+      var tailY = 0;
+      var tailRotation = 0;
+
+      if ($click != null) {
+        // Edge detection for click, takes space into account
+        var clickNearTop = ($click[0].offsetTop < space);
+        var clickNearBottom = ($click[0].offsetTop + $click.height() > $container.height() - space);
+        var clickNearLeft = ($click[0].offsetLeft < space);
+        var clickNearRight = ($click[0].offsetLeft + $click.width() > $container.width() - space);
+
+        // Click is not in a corner or close to edge, calculate position normally
+        positionX = $click[0].offsetLeft - popupWidth / 2  + $click.width() / 2;
+        positionY = $click[0].offsetTop - popupHeight - space;
+        tailX = positionX + popupWidth / 2 - $tail.width() / 2;
+        tailY = positionY + popupHeight - ($tail.height() / 2);
+        tailRotation = 225;
+
+        // If popup is outside top edge, position under click instead
+        if (popupHeight + space > $click[0].offsetTop) {
+          positionY = $click[0].offsetTop + $click.height() + space;
+          tailY = positionY - $tail.height() / 2 ;
+          tailRotation = 45;
+        }
+
+        // If popup is outside left edge, position left
+        if (positionX < 0) {
+          positionX = 0;
+        }
+
+        // If popup is outside right edge, position right
+        if (positionX + popupWidth > $container.width()) {
+          positionX = $container.width() - popupWidth;
+        }
+
+        // Special cases such as corner clicks, or close to an edge, they override X and Y positions if met
+        if (clickNearTop && (clickNearLeft || clickNearRight)) {
+          positionX = $click[0].offsetLeft + (clickNearLeft ? $click.width() : -popupWidth);
+          positionY = $click[0].offsetTop + $click.height();
+          disableTail = true;
+        }
+        else if (clickNearBottom && (clickNearLeft || clickNearRight)) {
+          positionX = $click[0].offsetLeft + (clickNearLeft ? $click.width() : -popupWidth);
+          positionY = $click[0].offsetTop - popupHeight;
+          disableTail = true;
+        }
+        else if (!clickNearTop && !clickNearBottom) {
+          if (clickNearLeft || clickNearRight) {
+            positionY = $click[0].offsetTop - popupHeight / 2 + $click.width() / 2;
+            positionX = $click[0].offsetLeft + (clickNearLeft ? $click.width() + space : -popupWidth + -space);
+            // Make sure this does not position the popup off screen
+            if (positionX < 0) {
+              positionX = 0;
+              disableTail = true;
+            }
+            else {
+              tailX = positionX + (clickNearLeft ? - $tail.width() / 2 : popupWidth - $tail.width() / 2);
+              tailY = positionY + popupHeight / 2 - $tail.height() / 2;
+              tailRotation = (clickNearLeft ? 315 : 135);
+            }
+          }
+        }
+
+        // Contain popup from overflowing bottom edge
+        if (positionY + popupHeight > $container.height()) {
+          positionY = $container.height() - popupHeight;
+
+          if (popupHeight > $container.height() - ($click[0].offsetTop + $click.height() + space)) {
+            disableTail = true;
+          }
+        }
+      }
+      else {
+        disableTail = true;
+      }
+
+      // Contain popup from ovreflowing top edge
+      if (positionY < 0) {
+        positionY = 0;
+      }
+
+      $element.css({top: positionY, left: positionX});
+      $tail.css({top: tailY, left: tailX});
+
+      if (!disableTail) {
+        $tail.css({
+          'left': tailX,
+          'top': tailY,
+          'transform': 'rotate(' + tailRotation + 'deg)'
+        }).show();
+      }
+      else {
+        $tail.hide();
+      }
+    };
+
+    /**
+     * Set element max height, used for animations.
+     *
+     * @param {H5P.jQuery} $element
+     */
+    var setElementHeight = function ($element) {
+      if (!$element.is(':visible')) {
+        // No animation
+        $element.css('max-height', 'none');
+        return;
+      }
+
+      // If this element is shown in the popup, we can't set width to 100%,
+      // since it already has a width set in CSS
+      var isFeedbackPopup = $element.hasClass('h5p-question-popup');
+
+      // Get natural element height
+      var $tmp = $element.clone()
+        .css({
+          'position': 'absolute',
+          'max-height': 'none',
+          'width': isFeedbackPopup ? '' : '100%'
+        })
+        .appendTo($element.parent());
+
+      // Need to take margins into account when calculating available space
+      var sideMargins = parseFloat($element.css('margin-left'))
+        + parseFloat($element.css('margin-right'));
+      var tmpElWidth = $tmp.css('width') ? $tmp.css('width') : '100%';
+      $tmp.css('width', 'calc(' + tmpElWidth + ' - ' + sideMargins + 'px)');
+
+      // Apply height to element
+      var h = Math.round($tmp.get(0).getBoundingClientRect().height);
+      var fontSize = parseFloat($element.css('fontSize'));
+      var relativeH = h / fontSize;
+      $element.css('max-height', relativeH + 'em');
+      $tmp.remove();
+
+      if (h > 0 && sections.buttons && sections.buttons.$element === $element) {
+        // Make sure buttons section is visible
+        showSection(sections.buttons);
+
+        // Resize buttons after resizing button section
+        setTimeout(resizeButtons, 150);
+      }
+      return h;
+    };
+
+    /**
+     * Does the actual job of hiding the buttons scheduled for hiding.
+     *
+     * @private
+     * @param {boolean} [relocateFocus] Find a new button to focus
+     */
+    var hideButtons = function (relocateFocus) {
+      for (var i = 0; i < buttonsToHide.length; i++) {
+        hideButton(buttonsToHide[i].id);
+      }
+      buttonsToHide = [];
+
+      if (relocateFocus) {
+        self.focusButton();
+      }
+    };
+
+    /**
+     * Does the actual hiding.
+     * @private
+     * @param {string} buttonId
+     */
+    var hideButton = function (buttonId) {
+      // Using detach() vs hide() makes it harder to cheat.
+      buttons[buttonId].$element.detach();
+      buttons[buttonId].isVisible = false;
+    };
+
+    /**
+     * Shows the buttons on the next tick. This is to avoid buttons flickering
+     * If they're both added and removed on the same tick.
+     *
+     * @private
+     */
+    var toggleButtons = function () {
+      // If no buttons section, return
+      if (sections.buttons === undefined) {
+        return;
+      }
+
+      // Clear transition timer, reevaluate if buttons will be detached
+      clearTimeout(toggleButtonsTransitionTimer);
+
+      // Show buttons
+      for (var i = 0; i < buttonsToShow.length; i++) {
+        insert(buttonOrder, buttonsToShow[i].id, buttons, sections.buttons.$element);
+        buttons[buttonsToShow[i].id].isVisible = true;
+      }
+      buttonsToShow = [];
+
+      // Hide buttons
+      var numToHide = 0;
+      var relocateFocus = false;
+      for (var j = 0; j < buttonsToHide.length; j++) {
+        var button = buttons[buttonsToHide[j].id];
+        if (button.isVisible) {
+          numToHide += 1;
+        }
+        if (button.$element.is(':focus')) {
+          // Move focus to the first visible button.
+          relocateFocus = true;
+        }
+      }
+
+      var animationTimer = 150;
+      if (sections.feedback && sections.feedback.$element.hasClass('h5p-question-popup')) {
+        animationTimer = 0;
+      }
+
+      if (numToHide === sections.buttons.$element.children().length) {
+        // All buttons are going to be hidden. Hide container using transition.
+        hideSection(sections.buttons);
+        // Detach buttons
+        hideButtons(relocateFocus);
+      }
+      else {
+        hideButtons(relocateFocus);
+
+        // Show button section
+        if (!sections.buttons.$element.is(':empty')) {
+          showSection(sections.buttons);
+          setElementHeight(sections.buttons.$element);
+
+          // Trigger resize after animation
+          toggleButtonsTransitionTimer = setTimeout(function () {
+            self.trigger('resize');
+          }, animationTimer);
+        }
+
+        // Resize buttons to fit container
+        resizeButtons();
+      }
+
+      toggleButtonsTimer = undefined;
+    };
+
+    /**
+     * Allows for scaling of the question image.
+     */
+    var scaleImage = function () {
+      var $imgSection = sections.image.$element;
+      clearTimeout(imageTransitionTimer);
+
+      // Add this here to avoid initial transition of the image making
+      // content overflow. Alternatively we need to trigger a resize.
+      $imgSection.addClass('animatable');
+
+      if (imageThumb) {
+
+        // Expand image
+        $(this).attr('aria-expanded', true);
+        $imgSection.addClass('h5p-question-image-fill-width');
+        imageThumb = false;
+
+        imageTransitionTimer = setTimeout(function () {
+          self.trigger('resize');
+        }, 600);
+      }
+      else {
+
+        // Scale down image
+        $(this).attr('aria-expanded', false);
+        $imgSection.removeClass('h5p-question-image-fill-width');
+        imageThumb = true;
+
+        imageTransitionTimer = setTimeout(function () {
+          self.trigger('resize');
+        }, 600);
+      }
+    };
+
+    /**
+     * Get scrollable ancestor of element
+     *
+     * @private
+     * @param {H5P.jQuery} $element
+     * @param {Number} [currDepth=0] Current recursive calls to ancestor, stop at maxDepth
+     * @param {Number} [maxDepth=5] Maximum depth for finding ancestor.
+     * @returns {H5P.jQuery} Parent element that is scrollable
+     */
+    var findScrollableAncestor = function ($element, currDepth, maxDepth) {
+      if (!currDepth) {
+        currDepth = 0;
+      }
+      if (!maxDepth) {
+        maxDepth = 5;
+      }
+      // Check validation of element or if we have reached document root
+      if (!$element || !($element instanceof $) || document === $element.get(0) || currDepth >= maxDepth) {
+        return;
+      }
+
+      if ($element.css('overflow-y') === 'auto') {
+        return $element;
+      }
+      else {
+        return findScrollableAncestor($element.parent(), currDepth + 1, maxDepth);
+      }
+    };
+
+    /**
+     * Scroll to bottom of Question.
+     *
+     * @private
+     */
+    var scrollToBottom = function () {
+      if (!$wrapper || ($wrapper.hasClass('h5p-standalone') && !H5P.isFullscreen)) {
+        return; // No scroll
+      }
+
+      var scrollableAncestor = findScrollableAncestor($wrapper);
+
+      // Scroll to bottom of scrollable ancestor
+      if (scrollableAncestor) {
+        scrollableAncestor.animate({
+          scrollTop: $wrapper.css('height')
+        }, "slow");
+      }
+    };
+
+    /**
+     * Resize buttons to fit container width
+     *
+     * @private
+     */
+    var resizeButtons = function () {
+      if (!buttons || !sections.buttons) {
+        return;
+      }
+
+      var go = function () {
+        // Don't do anything if button elements are not visible yet
+        if (!sections.buttons.$element.is(':visible')) {
+          return;
+        }
+
+        // Width of all buttons
+        var buttonsWidth = {
+          max: 0,
+          min: 0,
+          current: 0
+        };
+
+        for (var i in buttons) {
+          var button = buttons[i];
+          if (button.isVisible) {
+            setButtonWidth(buttons[i]);
+            buttonsWidth.max += button.width.max;
+            buttonsWidth.min += button.width.min;
+            buttonsWidth.current += button.isTruncated ? button.width.min : button.width.max;
+          }
+        }
+
+        var makeButtonsFit = function (availableWidth) {
+          if (buttonsWidth.max < availableWidth) {
+            // It is room for everyone on the right side of the score bar (without truncating)
+            if (buttonsWidth.max !== buttonsWidth.current) {
+              // Need to make everyone big
+              restoreButtonLabels(buttonsWidth.current, availableWidth);
+            }
+            return true;
+          }
+          else if (buttonsWidth.min < availableWidth) {
+            // Is it room for everyone on the right side of the score bar with truncating?
+            if (buttonsWidth.current > availableWidth) {
+              removeButtonLabels(buttonsWidth.current, availableWidth);
+            }
+            else {
+              restoreButtonLabels(buttonsWidth.current, availableWidth);
+            }
+            return true;
+          }
+          return false;
+        };
+
+        toggleFullWidthScorebar(false);
+
+        var buttonSectionWidth = Math.floor(sections.buttons.$element.width()) - 1;
+
+        if (!makeButtonsFit(buttonSectionWidth)) {
+          // If we get here we need to wrap:
+          toggleFullWidthScorebar(true);
+          buttonSectionWidth = Math.floor(sections.buttons.$element.width()) - 1;
+          makeButtonsFit(buttonSectionWidth);
+        }
+      };
+
+      // If visible, resize right away
+      if (sections.buttons.$element.is(':visible')) {
+        go();
+      }
+      else { // If not visible, try on the next tick
+        // Clear button truncation timer if within a button truncation function
+        if (buttonTruncationTimer) {
+          clearTimeout(buttonTruncationTimer);
+        }
+        buttonTruncationTimer = setTimeout(function () {
+          buttonTruncationTimer = undefined;
+          go();
+        }, 0);
+      }
+    };
+
+    var toggleFullWidthScorebar = function (enabled) {
+      if (sections.scorebar &&
+          sections.scorebar.$element &&
+          sections.scorebar.$element.hasClass('h5p-question-visible')) {
+        sections.buttons.$element.addClass('has-scorebar');
+        sections.buttons.$element.toggleClass('wrap', enabled);
+        sections.scorebar.$element.toggleClass('full-width', enabled);
+      }
+      else {
+        sections.buttons.$element.removeClass('has-scorebar');
+      }
+    };
+
+    /**
+     * Remove button labels until they use less than max width.
+     *
+     * @private
+     * @param {Number} buttonsWidth Total width of all buttons
+     * @param {Number} maxButtonsWidth Max width allowed for buttons
+     */
+    var removeButtonLabels = function (buttonsWidth, maxButtonsWidth) {
+      // Reverse traversal
+      for (var i = buttonOrder.length - 1; i >= 0; i--) {
+        var buttonId = buttonOrder[i];
+        var button = buttons[buttonId];
+        if (!button.isTruncated && button.isVisible) {
+          var $button = button.$element;
+          buttonsWidth -= button.width.max - button.width.min;
+
+          // Remove label
+          button.$element.attr('aria-label', $button.text()).html('').addClass('truncated');
+          button.isTruncated = true;
+          if (buttonsWidth <= maxButtonsWidth) {
+            // Buttons are small enough.
+            return;
+          }
+        }
+      }
+    };
+
+    /**
+     * Restore button labels until it fills maximum possible width without exceeding the max width.
+     *
+     * @private
+     * @param {Number} buttonsWidth Total width of all buttons
+     * @param {Number} maxButtonsWidth Max width allowed for buttons
+     */
+    var restoreButtonLabels = function (buttonsWidth, maxButtonsWidth) {
+      for (var i = 0; i < buttonOrder.length; i++) {
+        var buttonId = buttonOrder[i];
+        var button = buttons[buttonId];
+        if (button.isTruncated && button.isVisible) {
+          // Calculate new total width of buttons with a static pixel for consistency cross-browser
+          buttonsWidth += button.width.max - button.width.min + 1;
+
+          if (buttonsWidth > maxButtonsWidth) {
+            return;
+          }
+          // Restore label
+          button.$element.html(button.text);
+          button.$element.removeClass('truncated');
+          button.isTruncated = false;
+        }
+      }
+    };
+
+    /**
+     * Helper function for finding index of keyValue in array
+     *
+     * @param {String} keyValue Value to be found
+     * @param {String} key In key
+     * @param {Array} array In array
+     * @returns {number}
+     */
+    var existsInArray = function (keyValue, key, array) {
+      var i;
+      for (i = 0; i < array.length; i++) {
+        if (array[i][key] === keyValue) {
+          return i;
+        }
+      }
+      return -1;
+    };
+
+    /**
+     * Show a section
+     * @param {Object} section
+     */
+    var showSection = function (section) {
+      section.$element.addClass('h5p-question-visible');
+      section.isVisible = true;
+    };
+
+    /**
+     * Hide a section
+     * @param {Object} section
+     */
+    var hideSection = function (section) {
+      section.$element.css('max-height', '');
+      section.isVisible = false;
+
+      setTimeout(function () {
+        // Only hide if section hasn't been set to visible in the meantime
+        if (!section.isVisible) {
+          section.$element.removeClass('h5p-question-visible');
+        }
+      }, 150);
+    };
+
+    /**
+     * Set behaviour for question.
+     *
+     * @param {Object} options An object containing behaviour that will be extended by Question
+     */
+    self.setBehaviour = function (options) {
+      $.extend(behaviour, options);
+    };
+
+    /**
+     * A video to display above the task.
+     *
+     * @param {object} params
+     */
+    self.setVideo = function (params) {
+      sections.video = {
+        $element: $('<div/>', {
+          'class': 'h5p-question-video'
+        })
+      };
+
+      if (disableAutoPlay && params.params.playback) {
+        params.params.playback.autoplay = false;
+      }
+
+      // Never fit to wrapper
+      if (!params.params.visuals) {
+        params.params.visuals = {};
+      }
+      params.params.visuals.fit = false;
+      sections.video.instance = H5P.newRunnable(params, self.contentId, sections.video.$element, true);
+      var fromVideo = false; // Hack to avoid never ending loop
+      sections.video.instance.on('resize', function () {
+        fromVideo = true;
+        self.trigger('resize');
+        fromVideo = false;
+      });
+      self.on('resize', function () {
+        if (!fromVideo) {
+          sections.video.instance.trigger('resize');
+        }
+      });
+
+      return self;
+    };
+
+    /**
+     * Will stop any playback going on in the task.
+     */
+    self.pause = function () {
+      if (sections.video && sections.video.isVisible) {
+        sections.video.instance.pause();
+      }
+    };
+
+    /**
+     * Start playback of video
+     */
+    self.play = function () {
+      if (sections.video && sections.video.isVisible) {
+        sections.video.instance.play();
+      }
+    };
+
+    /**
+     * Disable auto play, useful in editors.
+     */
+    self.disableAutoPlay = function () {
+      disableAutoPlay = true;
+    };
+
+    /**
+     * Add task image.
+     *
+     * @param {string} path Relative
+     * @param {Object} [options] Options object
+     * @param {string} [options.alt] Text representation
+     * @param {string} [options.title] Hover text
+     * @param {Boolean} [options.disableImageZooming] Set as true to disable image zooming
+     */
+    self.setImage = function (path, options) {
+      options = options ? options : {};
+      sections.image = {};
+      // Image container
+      sections.image.$element = $('<div/>', {
+        'class': 'h5p-question-image h5p-question-image-fill-width'
+      });
+
+      // Inner wrap
+      var $imgWrap = $('<div/>', {
+        'class': 'h5p-question-image-wrap',
+        appendTo: sections.image.$element
+      });
+
+      // Image element
+      var $img = $('<img/>', {
+        src: H5P.getPath(path, self.contentId),
+        alt: (options.alt === undefined ? '' : options.alt),
+        title: (options.title === undefined ? '' : options.title),
+        on: {
+          load: function () {
+            self.trigger('imageLoaded', this);
+            self.trigger('resize');
+          }
+        },
+        appendTo: $imgWrap
+      });
+
+      // Disable image zooming
+      if (options.disableImageZooming) {
+        $img.css('maxHeight', 'none');
+
+        // Make sure we are using the correct amount of width at all times
+        var determineImgWidth = function () {
+
+          // Remove margins if natural image width is bigger than section width
+          var imageSectionWidth = sections.image.$element.get(0).getBoundingClientRect().width;
+
+          // Do not transition, for instant measurements
+          $imgWrap.css({
+            '-webkit-transition': 'none',
+            'transition': 'none'
+          });
+
+          // Margin as translateX on both sides of image.
+          var diffX = 2 * ($imgWrap.get(0).getBoundingClientRect().left -
+            sections.image.$element.get(0).getBoundingClientRect().left);
+
+          if ($img.get(0).naturalWidth >= imageSectionWidth - diffX) {
+            sections.image.$element.addClass('h5p-question-image-fill-width');
+          }
+          else { // Use margin for small res images
+            sections.image.$element.removeClass('h5p-question-image-fill-width');
+          }
+
+          // Reset transition rules
+          $imgWrap.css({
+            '-webkit-transition': '',
+            'transition': ''
+          });
+        };
+
+        // Determine image width
+        if ($img.is(':visible')) {
+          determineImgWidth();
+        }
+        else {
+          $img.on('load', determineImgWidth);
+        }
+
+        // Skip adding zoom functionality
+        return;
+      }
+
+      var sizeDetermined = false;
+      var determineSize = function () {
+        if (sizeDetermined || !$img.is(':visible')) {
+          return; // Try again next time.
+        }
+
+        $imgWrap.addClass('h5p-question-image-scalable')
+          .attr('aria-expanded', false)
+          .attr('role', 'button')
+          .attr('tabIndex', '0')
+          .on('click', function (event) {
+            if (event.which === 1) {
+              scaleImage.apply(this); // Left mouse button click
+            }
+          }).on('keypress', function (event) {
+            if (event.which === 32) {
+              event.preventDefault(); // Prevent default behaviour; page scroll down
+              scaleImage.apply(this); // Space bar pressed
+            }
+          });
+        sections.image.$element.removeClass('h5p-question-image-fill-width');
+
+        sizeDetermined  = true; // Prevent any futher events
+      };
+
+      self.on('resize', determineSize);
+
+      return self;
+    };
+
+    /**
+     * Add the introduction section.
+     *
+     * @param {(string|H5P.jQuery)} content
+     */
+    self.setIntroduction = function (content) {
+      register('introduction', content);
+
+      return self;
+    };
+
+    /**
+     * Add the content section.
+     *
+     * @param {(string|H5P.jQuery)} content
+     * @param {Object} [options]
+     * @param {string} [options.class]
+     */
+    self.setContent = function (content, options) {
+      register('content', content);
+
+      if (options && options.class) {
+        sections.content.$element.addClass(options.class);
+      }
+
+      return self;
+    };
+
+    /**
+     * Force readspeaker to read text. Useful when you have to use
+     * setTimeout for animations.
+     */
+    self.read = function (content) {
+      if (!$read) {
+        return; // Not ready yet
+      }
+
+      if (readText) {
+        // Combine texts if called multiple times
+        readText += (readText.substr(-1, 1) === '.' ? ' ' : '. ') + content;
+      }
+      else {
+        readText = content;
+      }
+
+      // Set text
+      $read.html(readText);
+
+      setTimeout(function () {
+        // Stop combining when done reading
+        readText = null;
+        $read.html('');
+      }, 100);
+    };
+
+    /**
+     * Read feedback
+     */
+    self.readFeedback = function () {
+      var invalidFeedback =
+        behaviour.disableReadSpeaker ||
+        !showFeedback ||
+        !sections.feedback ||
+        !sections.feedback.$element;
+
+      if (invalidFeedback) {
+        return;
+      }
+
+      var $feedbackText = $('.h5p-question-feedback-content-text', sections.feedback.$element);
+      if ($feedbackText && $feedbackText.html() && $feedbackText.html().length) {
+        self.read($feedbackText.html());
+      }
+    };
+
+    /**
+     * Remove feedback
+     *
+     * @return {H5P.Question}
+     */
+    self.removeFeedback = function () {
+
+      clearTimeout(feedbackTransitionTimer);
+
+      if (sections.feedback && showFeedback) {
+
+        showFeedback = false;
+
+        // Hide feedback & scorebar
+        hideSection(sections.scorebar);
+        hideSection(sections.feedback);
+
+        sectionsIsTransitioning = true;
+
+        // Detach after transition
+        feedbackTransitionTimer = setTimeout(function () {
+          // Avoiding Transition.onTransitionEnd since it will register multiple events, and there's no way to cancel it if the transition changes back to "show" while the animation is happening.
+          if (!showFeedback) {
+            sections.feedback.$element.children().detach();
+            sections.scorebar.$element.children().detach();
+
+            // Trigger resize after animation
+            self.trigger('resize');
+          }
+          sectionsIsTransitioning = false;
+          scoreBar.setScore(0);
+        }, 150);
+
+        if ($wrapper) {
+          $wrapper.find('.h5p-question-feedback-tail').remove();
+        }
+      }
+
+      return self;
+    };
+
+    /**
+     * Set feedback message.
+     *
+     * @param {string} [content]
+     * @param {number} score The score
+     * @param {number} maxScore The maximum score for this question
+     * @param {string} [scoreBarLabel] Makes it easier for readspeakers to identify the scorebar
+     * @param {string} [helpText] Help text that describes the score inside a tip icon
+     * @param {object} [popupSettings] Extra settings for popup feedback
+     * @param {boolean} [popupSettings.showAsPopup] Should the feedback display as popup?
+     * @param {string} [popupSettings.closeText] Translation for close button text
+     * @param {object} [popupSettings.click] Element representing where user clicked on screen
+     */
+    self.setFeedback = function (content, score, maxScore, scoreBarLabel, helpText, popupSettings, scoreExplanationButtonLabel) {
+      // Feedback is disabled
+      if (behaviour.disableFeedback) {
+        return self;
+      }
+
+      // Need to toggle buttons right away to avoid flickering/blinking
+      // Note: This means content types should invoke hide/showButton before setFeedback
+      toggleButtons();
+
+      clickElement = (popupSettings != null && popupSettings.click != null ? popupSettings.click : null);
+      clearTimeout(feedbackTransitionTimer);
+
+      var $feedback = $('<div>', {
+        'class': 'h5p-question-feedback-container'
+      });
+
+      var $feedbackContent = $('<div>', {
+        'class': 'h5p-question-feedback-content'
+      }).appendTo($feedback);
+
+      // Feedback text
+      $('<div>', {
+        'class': 'h5p-question-feedback-content-text',
+        'html': content
+      }).appendTo($feedbackContent);
+
+      var $scorebar = $('<div>', {
+        'class': 'h5p-question-scorebar-container'
+      });
+      if (scoreBar === undefined) {
+        scoreBar = JoubelUI.createScoreBar(maxScore, scoreBarLabel, helpText, scoreExplanationButtonLabel);
+      }
+      scoreBar.appendTo($scorebar);
+
+      $feedbackContent.toggleClass('has-content', content !== undefined && content.length > 0);
+
+      // Feedback for readspeakers
+      if (!behaviour.disableReadSpeaker && scoreBarLabel) {
+        self.read(scoreBarLabel.replace(':num', score).replace(':total', maxScore) + '. ' + (content ? content : ''));
+      }
+
+      showFeedback = true;
+      if (sections.feedback) {
+        // Update section
+        update('feedback', $feedback);
+        update('scorebar', $scorebar);
+      }
+      else {
+        // Create section
+        register('feedback', $feedback);
+        register('scorebar', $scorebar);
+        if (initialized && $wrapper) {
+          insert(self.order, 'feedback', sections, $wrapper);
+          insert(self.order, 'scorebar', sections, $wrapper);
+        }
+      }
+
+      showSection(sections.feedback);
+      showSection(sections.scorebar);
+
+      resizeButtons();
+
+      if (popupSettings != null && popupSettings.showAsPopup == true) {
+        makeFeedbackPopup(popupSettings.closeText);
+        scoreBar.setScore(score);
+      }
+      else {
+        // Show feedback section
+        feedbackTransitionTimer = setTimeout(function () {
+          setElementHeight(sections.feedback.$element);
+          setElementHeight(sections.scorebar.$element);
+          sectionsIsTransitioning = true;
+
+          // Scroll to bottom after showing feedback
+          scrollToBottom();
+
+          // Trigger resize after animation
+          feedbackTransitionTimer = setTimeout(function () {
+            sectionsIsTransitioning = false;
+            self.trigger('resize');
+            scoreBar.setScore(score);
+          }, 150);
+        }, 0);
+      }
+
+      return self;
+    };
+
+    /**
+     * Set feedback content (no animation).
+     *
+     * @param {string} content
+     * @param {boolean} [extendContent] True will extend content, instead of replacing it
+     */
+    self.updateFeedbackContent = function (content, extendContent) {
+      if (sections.feedback && sections.feedback.$element) {
+
+        if (extendContent) {
+          content = $('.h5p-question-feedback-content', sections.feedback.$element).html() + ' ' + content;
+        }
+
+        // Update feedback content html
+        $('.h5p-question-feedback-content', sections.feedback.$element).html(content).addClass('has-content');
+
+        // Make sure the height is correct
+        setElementHeight(sections.feedback.$element);
+
+        // Need to trigger resize when feedback has finished transitioning
+        setTimeout(self.trigger.bind(self, 'resize'), 150);
+      }
+
+      return self;
+    };
+
+    /**
+     * Set the content of the explanation / feedback panel
+     *
+     * @param {Object} data
+     * @param {string} data.correct
+     * @param {string} data.wrong
+     * @param {string} data.text
+     * @param {string} title Title for explanation panel
+     *
+     * @return {H5P.Question}
+     */
+    self.setExplanation = function (data, title) {
+      if (data) {
+        var explainer = new H5P.Question.Explainer(title, data);
+
+        if (sections.explanation) {
+          // Update section
+          update('explanation', explainer.getElement());
+        }
+        else {
+          register('explanation', explainer.getElement());
+
+          if (initialized && $wrapper) {
+            insert(self.order, 'explanation', sections, $wrapper);
+          }
+        }
+      }
+      else if (sections.explanation) {
+        // Hide explanation section
+        sections.explanation.$element.children().detach();
+      }
+
+      return self;
+    };
+
+    /**
+     * Checks to see if button is registered.
+     *
+     * @param {string} id
+     * @returns {boolean}
+     */
+    self.hasButton = function (id) {
+      return (buttons[id] !== undefined);
+    };
+
+    /**
+     * @typedef {Object} ConfirmationDialog
+     * @property {boolean} [enable] Must be true to show confirmation dialog
+     * @property {Object} [instance] Instance that uses confirmation dialog
+     * @property {jQuery} [$parentElement] Append to this element.
+     * @property {Object} [l10n] Translatable fields
+     * @property {string} [l10n.header] Header text
+     * @property {string} [l10n.body] Body text
+     * @property {string} [l10n.cancelLabel]
+     * @property {string} [l10n.confirmLabel]
+     */
+
+    /**
+     * Register buttons for the task.
+     *
+     * @param {string} id
+     * @param {string} text label
+     * @param {function} clicked
+     * @param {boolean} [visible=true]
+     * @param {Object} [options] Options for button
+     * @param {Object} [extras] Extra options
+     * @param {ConfirmationDialog} [extras.confirmationDialog] Confirmation dialog
+     * @param {Object} [extras.contentData] Content data
+     * @params {string} [extras.textIfSubmitting] Text to display if submitting
+     */
+    self.addButton = function (id, text, clicked, visible, options, extras) {
+      if (buttons[id]) {
+        return self; // Already registered
+      }
+
+      if (sections.buttons === undefined)  {
+        // We have buttons, register wrapper
+        register('buttons');
+        if (initialized) {
+          insert(self.order, 'buttons', sections, $wrapper);
+        }
+      }
+
+      extras = extras || {};
+      extras.confirmationDialog = extras.confirmationDialog || {};
+      options = options || {};
+
+      var confirmationDialog =
+        self.addConfirmationDialogToButton(extras.confirmationDialog, clicked);
+
+      /**
+       * Handle button clicks through both mouse and keyboard
+       * @private
+       */
+      var handleButtonClick = function () {
+        if (extras.confirmationDialog.enable && confirmationDialog) {
+          // Show popups section if used
+          if (!extras.confirmationDialog.$parentElement) {
+            sections.popups.$element.removeClass('hidden');
+          }
+          confirmationDialog.show($e.position().top);
+        }
+        else {
+          clicked();
+        }
+      };
+
+      const isSubmitting = extras.contentData && extras.contentData.standalone
+        && (extras.contentData.isScoringEnabled || extras.contentData.isReportingEnabled);
+
+      if (isSubmitting && extras.textIfSubmitting) {
+        text = extras.textIfSubmitting;
+      }
+
+      buttons[id] = {
+        isTruncated: false,
+        text: text,
+        isVisible: false
+      };
+      // The button might be <button> or <a>
+      // (dependent on options.href set or not)
+      var isAnchorTag = (options.href !== undefined);
+      var $e = buttons[id].$element = JoubelUI.createButton($.extend({
+        'class': 'h5p-question-' + id,
+        html: text,
+        title: text,
+        on: {
+          click: function (event) {
+            handleButtonClick();
+            if (isAnchorTag) {
+              event.preventDefault();
+            }
+          }
+        }
+      }, options));
+      buttonOrder.push(id);
+
+      // The button might be <button> or <a>. If <a>, the space key is not
+      // triggering the click event, must therefore handle this here:
+      if (isAnchorTag) {
+        $e.on('keypress', function (event) {
+          if (event.which === 32) { // Space
+            handleButtonClick();
+            event.preventDefault();
+          }
+        });
+      }
+
+      if (visible === undefined || visible) {
+        // Button should be visible
+        $e.appendTo(sections.buttons.$element);
+        buttons[id].isVisible = true;
+        showSection(sections.buttons);
+      }
+
+      return self;
+    };
+
+    var setButtonWidth = function (button) {
+      var $button = button.$element;
+      var $tmp = $button.clone()
+        .css({
+          'position': 'absolute',
+          'white-space': 'nowrap',
+          'max-width': 'none'
+        }).removeClass('truncated')
+        .html(button.text)
+        .appendTo($button.parent());
+
+      // Calculate max width (button including text)
+      button.width = {
+        max: Math.ceil($tmp.outerWidth() + parseFloat($tmp.css('margin-left')) + parseFloat($tmp.css('margin-right')))
+      };
+
+      // Calculate min width (truncated, icon only)
+      $tmp.html('').addClass('truncated');
+      button.width.min = Math.ceil($tmp.outerWidth() + parseFloat($tmp.css('margin-left')) + parseFloat($tmp.css('margin-right')));
+      $tmp.remove();
+    };
+
+    /**
+     * Add confirmation dialog to button
+     * @param {ConfirmationDialog} options
+     *  A confirmation dialog that will be shown before click handler of button
+     *  is triggered
+     * @param {function} clicked
+     *  Click handler of button
+     * @return {H5P.ConfirmationDialog|undefined}
+     *  Confirmation dialog if enabled
+     */
+    self.addConfirmationDialogToButton = function (options, clicked) {
+      options = options || {};
+
+      if (!options.enable) {
+        return;
+      }
+
+      // Confirmation dialog
+      var confirmationDialog = new H5P.ConfirmationDialog({
+        instance: options.instance,
+        headerText: options.l10n.header,
+        dialogText: options.l10n.body,
+        cancelText: options.l10n.cancelLabel,
+        confirmText: options.l10n.confirmLabel
+      });
+
+      // Determine parent element
+      if (options.$parentElement) {
+        confirmationDialog.appendTo(options.$parentElement.get(0));
+      }
+      else {
+
+        // Create popup section and append to that
+        if (sections.popups === undefined) {
+          register('popups');
+          if (initialized) {
+            insert(self.order, 'popups', sections, $wrapper);
+          }
+          sections.popups.$element.addClass('hidden');
+          self.order.push('popups');
+        }
+        confirmationDialog.appendTo(sections.popups.$element.get(0));
+      }
+
+      // Add event listeners
+      confirmationDialog.on('confirmed', function () {
+        if (!options.$parentElement) {
+          sections.popups.$element.addClass('hidden');
+        }
+        clicked();
+
+        // Trigger to content type
+        self.trigger('confirmed');
+      });
+
+      confirmationDialog.on('canceled', function () {
+        if (!options.$parentElement) {
+          sections.popups.$element.addClass('hidden');
+        }
+        // Trigger to content type
+        self.trigger('canceled');
+      });
+
+      return confirmationDialog;
+    };
+
+    /**
+     * Show registered button with given identifier.
+     *
+     * @param {string} id
+     * @param {Number} [priority]
+     */
+    self.showButton = function (id, priority) {
+      var aboutToBeHidden = existsInArray(id, 'id', buttonsToHide) !== -1;
+      if (buttons[id] === undefined || (buttons[id].isVisible === true && !aboutToBeHidden)) {
+        return self;
+      }
+
+      priority = priority || 0;
+
+      // Skip if already being shown
+      var indexToShow = existsInArray(id, 'id', buttonsToShow);
+      if (indexToShow !== -1) {
+
+        // Update priority
+        if (buttonsToShow[indexToShow].priority < priority) {
+          buttonsToShow[indexToShow].priority = priority;
+        }
+
+        return self;
+      }
+
+      // Check if button is going to be hidden on next tick
+      var exists = existsInArray(id, 'id', buttonsToHide);
+      if (exists !== -1) {
+
+        // Skip hiding if higher priority
+        if (buttonsToHide[exists].priority <= priority) {
+          buttonsToHide.splice(exists, 1);
+          buttonsToShow.push({id: id, priority: priority});
+        }
+
+      } // If button is not shown
+      else if (!buttons[id].$element.is(':visible')) {
+
+        // Show button on next tick
+        buttonsToShow.push({id: id, priority: priority});
+      }
+
+      if (!toggleButtonsTimer) {
+        toggleButtonsTimer = setTimeout(toggleButtons, 0);
+      }
+
+      return self;
+    };
+
+    /**
+     * Hide registered button with given identifier.
+     *
+     * @param {string} id
+     * @param {number} [priority]
+     */
+    self.hideButton = function (id, priority) {
+      var aboutToBeShown = existsInArray(id, 'id', buttonsToShow) !== -1;
+      if (buttons[id] === undefined || (buttons[id].isVisible === false && !aboutToBeShown)) {
+        return self;
+      }
+
+      priority = priority || 0;
+
+      // Skip if already being hidden
+      var indexToHide = existsInArray(id, 'id', buttonsToHide);
+      if (indexToHide !== -1) {
+
+        // Update priority
+        if (buttonsToHide[indexToHide].priority < priority) {
+          buttonsToHide[indexToHide].priority = priority;
+        }
+
+        return self;
+      }
+
+      // Check if buttons is going to be shown on next tick
+      var exists = existsInArray(id, 'id', buttonsToShow);
+      if (exists !== -1) {
+
+        // Skip showing if higher priority
+        if (buttonsToShow[exists].priority <= priority) {
+          buttonsToShow.splice(exists, 1);
+          buttonsToHide.push({id: id, priority: priority});
+        }
+      }
+      else if (!buttons[id].$element.is(':visible')) {
+
+        // Make sure it is detached in case the container is hidden.
+        hideButton(id);
+      }
+      else {
+
+        // Hide button on next tick.
+        buttonsToHide.push({id: id, priority: priority});
+      }
+
+      if (!toggleButtonsTimer) {
+        toggleButtonsTimer = setTimeout(toggleButtons, 0);
+      }
+
+      return self;
+    };
+
+    /**
+     * Set focus to the given button. If no button is given the first visible
+     * button gets focused. This is useful if you lose focus.
+     *
+     * @param {string} [id]
+     */
+    self.focusButton = function (id) {
+      if (id === undefined) {
+        // Find first button that is visible.
+        for (var i = 0; i < buttonOrder.length; i++) {
+          var button = buttons[buttonOrder[i]];
+          if (button && button.isVisible) {
+            // Give that button focus
+            button.$element.focus();
+            break;
+          }
+        }
+      }
+      else if (buttons[id] && buttons[id].$element.is(':visible')) {
+        // Set focus to requested button
+        buttons[id].$element.focus();
+      }
+
+      return self;
+    };
+
+    /**
+     * Toggle readspeaker functionality
+     * @param {boolean} [disable] True to disable, false to enable.
+     */
+    self.toggleReadSpeaker = function (disable) {
+      behaviour.disableReadSpeaker = disable || !behaviour.disableReadSpeaker;
+    };
+
+    /**
+     * Set new element for section.
+     *
+     * @param {String} id
+     * @param {H5P.jQuery} $element
+     */
+    self.insertSectionAtElement = function (id, $element) {
+      if (sections[id] === undefined) {
+        register(id);
+      }
+      sections[id].parent = $element;
+
+      // Insert section if question is not initialized
+      if (!initialized) {
+        insert([id], id, sections, $element);
+      }
+
+      return self;
+    };
+
+    /**
+     * Attach content to given container.
+     *
+     * @param {H5P.jQuery} $container
+     */
+    self.attach = function ($container) {
+      if (self.isRoot()) {
+        self.setActivityStarted();
+      }
+
+      // The first time we attach we also create our DOM elements.
+      if ($wrapper === undefined) {
+        if (self.registerDomElements !== undefined &&
+           (self.registerDomElements instanceof Function ||
+           typeof self.registerDomElements === 'function')) {
+
+          // Give the question type a chance to register before attaching
+          self.registerDomElements();
+        }
+
+        // Create section for reading messages
+        $read = $('<div/>', {
+          'aria-live': 'polite',
+          'class': 'h5p-hidden-read'
+        });
+        register('read', $read);
+        self.trigger('registerDomElements');
+      }
+
+      // Prepare container
+      $wrapper = $container;
+      $container.html('')
+        .addClass('h5p-question h5p-' + type);
+
+      // Add sections in given order
+      var $sections = [];
+      for (var i = 0; i < self.order.length; i++) {
+        var section = self.order[i];
+        if (sections[section]) {
+          if (sections[section].parent) {
+            // Section has a different parent
+            sections[section].$element.appendTo(sections[section].parent);
+          }
+          else {
+            $sections.push(sections[section].$element);
+          }
+          sections[section].isVisible = true;
+        }
+      }
+
+      // Only append once to DOM for optimal performance
+      $container.append($sections);
+
+      // Let others react to dom changes
+      self.trigger('domChanged', {
+        '$target': $container,
+        'library': self.libraryInfo.machineName,
+        'contentId': self.contentId,
+        'key': 'newLibrary'
+      }, {'bubbles': true, 'external': true});
+
+      // ??
+      initialized = true;
+
+      return self;
+    };
+
+    /**
+     * Detach all sections from their parents
+     */
+    self.detachSections = function () {
+      // Deinit Question
+      initialized = false;
+
+      // Detach sections
+      for (var section in sections) {
+        sections[section].$element.detach();
+      }
+
+      return self;
+    };
+
+    // Listen for resize
+    self.on('resize', function () {
+      // Allow elements to attach and set their height before resizing
+      if (!sectionsIsTransitioning && sections.feedback && showFeedback) {
+        // Resize feedback to fit
+        setElementHeight(sections.feedback.$element);
+      }
+
+      // Re-position feedback popup if in use
+      var $element = sections.feedback;
+      var $click = clickElement;
+
+      if ($element != null && $element.$element != null && $click != null && $click.$element != null) {
+        setTimeout(function () {
+          positionFeedbackPopup($element.$element, $click.$element);
+        }, 10);
+      }
+
+      resizeButtons();
+    });
+  }
+
+  // Inheritance
+  Question.prototype = Object.create(EventDispatcher.prototype);
+  Question.prototype.constructor = Question;
+
+  /**
+   * Determine the overall feedback to display for the question.
+   * Returns empty string if no matching range is found.
+   *
+   * @param {Object[]} feedbacks
+   * @param {number} scoreRatio
+   * @return {string}
+   */
+  Question.determineOverallFeedback = function (feedbacks, scoreRatio) {
+    scoreRatio = Math.floor(scoreRatio * 100);
+
+    for (var i = 0; i < feedbacks.length; i++) {
+      var feedback = feedbacks[i];
+      var hasFeedback = (feedback.feedback !== undefined && feedback.feedback.trim().length !== 0);
+
+      if (feedback.from <= scoreRatio && feedback.to >= scoreRatio && hasFeedback) {
+        return feedback.feedback;
+      }
+    }
+
+    return '';
+  };
+
+  return Question;
+})(H5P.jQuery, H5P.EventDispatcher, H5P.JoubelUI);
+;
+H5P.Question.Explainer = (function ($) {
+  /**
+   * Constructor
+   *
+   * @class
+   * @param {string} title
+   * @param {array} explanations
+   */
+  function Explainer(title, explanations) {
+    var self = this;
+
+    /**
+     * Create the DOM structure
+     */
+    var createHTML = function () {
+      self.$explanation = $('<div>', {
+        'class': 'h5p-question-explanation-container'
+      });
+
+      // Add title:
+      $('<div>', {
+        'class': 'h5p-question-explanation-title',
+        role: 'heading',
+        html: title,
+        appendTo: self.$explanation
+      });
+
+      var $explanationList = $('<ul>', {
+        'class': 'h5p-question-explanation-list',
+        appendTo: self.$explanation
+      });
+
+      for (var i = 0; i < explanations.length; i++) {
+        var feedback = explanations[i];
+        var $explanationItem = $('<li>', {
+          'class': 'h5p-question-explanation-item',
+          appendTo: $explanationList
+        });
+
+        var $content = $('<div>', {
+          'class': 'h5p-question-explanation-status'
+        });
+
+        if (feedback.correct) {
+          $('<span>', {
+            'class': 'h5p-question-explanation-correct',
+            html: feedback.correct,
+            appendTo: $content
+          });
+        }
+        if (feedback.wrong) {
+          $('<span>', {
+            'class': 'h5p-question-explanation-wrong',
+            html: feedback.wrong,
+            appendTo: $content
+          });
+        }
+        $content.appendTo($explanationItem);
+
+        if (feedback.text) {
+          $('<div>', {
+            'class': 'h5p-question-explanation-text',
+            html: feedback.text,
+            appendTo: $explanationItem
+          });
+        }
+      }
+    };
+
+    createHTML();
+
+    /**
+     * Return the container HTMLElement
+     *
+     * @return {HTMLElement}
+     */
+    self.getElement = function () {
+      return self.$explanation;
+    };
+  }
+
+  return Explainer;
+
+})(H5P.jQuery);
+;
+(function (Question) {
+
+  /**
+   * Makes it easy to add animated score points for your question type.
+   *
+   * @class H5P.Question.ScorePoints
+   */
+  Question.ScorePoints = function () {
+    var self = this;
+
+    var elements = [];
+    var showElementsTimer;
+
+    /**
+     * Create the element that displays the score point element for questions.
+     *
+     * @param {boolean} isCorrect
+     * @return {HTMLElement}
+     */
+    self.getElement = function (isCorrect) {
+      var element = document.createElement('div');
+      element.classList.add(isCorrect ? 'h5p-question-plus-one' : 'h5p-question-minus-one');
+      element.classList.add('h5p-question-hidden-one');
+      elements.push(element);
+
+      // Schedule display animation of all added elements
+      if (showElementsTimer) {
+        clearTimeout(showElementsTimer);
+      }
+      showElementsTimer = setTimeout(showElements, 0);
+
+      return element;
+    };
+
+    /**
+     * @private
+     */
+    var showElements = function () {
+      // Determine delay between triggering animations
+      var delay = 0;
+      var increment = 150;
+      var maxTime = 1000;
+
+      if (elements.length && elements.length > Math.ceil(maxTime / increment)) {
+        // Animations will run for more than ~1 second, reduce it.
+        increment = maxTime / elements.length;
+      }
+
+      for (var i = 0; i < elements.length; i++) {
+        // Use timer to trigger show
+        setTimeout(showElement(elements[i]), delay);
+
+        // Increse delay for next element
+        delay += increment;
+      }
+    };
+
+    /**
+     * Trigger transition animation for the given element
+     *
+     * @private
+     * @param {HTMLElement} element
+     * @return {function}
+     */
+    var showElement = function (element) {
+      return function () {
+        element.classList.remove('h5p-question-hidden-one');
+      };
+    };
+  };
+
+})(H5P.Question);
+;
+!function(){"use strict";var t=function(){function t(){var t=arguments.length>0&&void 0!==arguments[0]?arguments[0]:{},e=arguments.length>1?arguments[1]:void 0;this.params=t,this.callbacks=e||{},this.content=document.createElement("div"),this.content.classList.add("h5p-crossword-clue-announcer"),this.clueId=document.createElement("span"),this.clueId.classList.add("h5p-crossword-clue-announcer-clue-id"),this.content.appendChild(this.clueId),this.clue=document.createElement("span"),this.clue.classList.add("h5p-crossword-clue-announcer-clue"),this.content.appendChild(this.clue),this.answerLength=document.createElement("span"),this.answerLength.classList.add("h5p-crossword-clue-announcer-answer-length"),this.content.appendChild(this.answerLength)}var e=t.prototype;return e.getDOM=function(){return this.content},e.setClue=function(t){t.orientation&&t.clueId&&t.clue&&t.answerLength&&(this.clueId.innerText="".concat(t.clueId," ").concat(t.orientation),this.clue.innerText=t.clue,this.answerLength.innerText="(".concat(t.answerLength,")"))},e.show=function(){this.content.classList.remove("h5p-crossword-display-none")},e.hide=function(){this.content.classList.add("h5p-crossword-display-none")},e.reset=function(){this.clueId.innerText="",this.clue.innerText="",this.answerLength.innerText=""},t}();function e(t){return(e="function"==typeof Symbol&&"symbol"==typeof Symbol.iterator?function(t){return typeof t}:function(t){return t&&"function"==typeof Symbol&&t.constructor===Symbol&&t!==Symbol.prototype?"symbol":typeof t})(t)}var n=function(){function t(){}return t.extend=function(){for(var t=1;t<arguments.length;t++)for(var n in arguments[t])Object.prototype.hasOwnProperty.call(arguments[t],n)&&("object"===e(arguments[0][n])&&"object"===e(arguments[t][n])?this.extend(arguments[0][n],arguments[t][n]):arguments[0][n]=arguments[t][n]);return arguments[0]},t.htmlDecode=function(t){return(new DOMParser).parseFromString(t,"text/html").documentElement.textContent},t.stripHTML=function(t){var e=document.createElement("div");return e.innerHTML=t,e.textContent||e.innerText||""},t.createArray=function(e){var n=new Array(e||0),o=e;if(arguments.length>1)for(var r=Array.prototype.slice.call(arguments,1);o--;)n[e-1-o]=t.createArray.apply(this,r);return n},t.shuffleArray=function(t){var e,n,o;for(o=t.length-1;o>0;o--)e=Math.floor(Math.random()*(o+1)),n=t[o],t[o]=t[e],t[e]=n;return t},t.formatLanguageCode=function(t){if("string"!=typeof t)return t;var e=t.split("-");return e[0]=e[0].toLowerCase(),e.length>1&&(e[1]=e[1].toUpperCase()),t=e.join("-")},t.toUpperCase=function(t){var e=arguments.length>1&&void 0!==arguments[1]?arguments[1]:[];return"string"!=typeof t?null:("string"==typeof e&&(e=e.split("").map((function(t){return{lowerCase:t,upperCase:t}}))),Array.isArray(e)||(e=[]),(e=e.filter((function(t){return"string"==typeof t.lowerCase&&1===t.lowerCase.length&&"string"==typeof t.upperCase&&1===t.upperCase.length}))).forEach((function(e,n){for(;-1!==t.indexOf(e.lowerCase);)t=t.replace(e.lowerCase,"[CROSSWORDPLACEHOLDER".concat(n,"]"))})),t=t.toUpperCase(),e.forEach((function(e,n){for(;-1!==t.indexOf("[CROSSWORDPLACEHOLDER".concat(n,"]"));)t=t.replace("[CROSSWORDPLACEHOLDER".concat(n,"]"),e.upperCase)})),t)},t.waitForDOM=function(t,e){var n=this,o=arguments.length>2&&void 0!==arguments[2]?arguments[2]:function(){},r=arguments.length>3&&void 0!==arguments[3]?arguments[3]:50,s=arguments.length>4&&void 0!==arguments[4]?arguments[4]:100;if(0!==r&&t&&"function"==typeof e&&"function"==typeof o){s=Math.max(s,50);var i=document.querySelector(t);i?e():setTimeout((function(){n.waitForDOM(t,e,o,r<0?-1:r-1,s)}),s)}else o()},t}();n.CONTROL_KEY_CODES=[8,9,13,16,17,18,19,20,27,33,34,35,36,37,38,39,40,45,46,91,92,93,112,113,114,115,116,117,118,119,120,121,122,123,144,145],n.UPPERCASE_EXCEPTIONS=[{lowerCase:"ß",upperCase:"ẞ"}],n.CHARACTER_PLACEHOLDER="＿";var o=n,r=function(){function t(t){var e=this,n=arguments.length>1&&void 0!==arguments[1]?arguments[1]:{};this.params=o.extend({container:document.body,content:document.createElement("div"),styleBase:"h5p-crossword-overlay",position:{offsetHorizontal:0,offsetVertical:0},l10n:{closeWindow:"Close"}},t),this.callbacks=n,this.callbacks.onClose=n.onClose||function(){},this.callbacks.onRead=n.onRead||function(){},this.isVisible=!1,this.focusableElements=[],this.overlay=document.createElement("div"),this.overlay.classList.add("".concat(this.params.styleBase,"-outer-wrapper")),this.overlay.classList.add("h5p-crossword-invisible"),this.overlay.setAttribute("role","dialog"),this.params.l10n.title&&this.overlay.setAttribute("aria-label",this.params.l10n.title),this.overlay.setAttribute("aria-modal","true"),this.content=document.createElement("div"),this.content.classList.add("".concat(this.params.styleBase,"-content")),this.content.appendChild(this.params.content),this.buttonClose=document.createElement("button"),this.buttonClose.classList.add("".concat(this.params.styleBase,"-button-close")),this.buttonClose.setAttribute("title",this.params.l10n.closeWindow),this.buttonClose.addEventListener("click",(function(){e.callbacks.onClose()})),this.overlay.appendChild(this.buttonClose),this.overlay.appendChild(this.content),document.addEventListener("focus",(function(t){e.isVisible&&0!==e.focusableElements.length&&e.trapFocus(t)}),!0),this.blocker=document.createElement("div"),this.blocker.classList.add("h5p-crossword-overlay-blocker"),this.blocker.classList.add("h5p-crossword-display-none")}var e=t.prototype;return e.getDOM=function(){return this.overlay},e.setContent=function(t){for(;this.content.firstChild;)this.content.removeChild(this.content.firstChild);this.content.appendChild(t),this.content.scrollTop=0},e.trapFocus=function(t){this.isChild(t.target)?this.currentFocusElement=t.target:(this.currentFocusElement===this.focusableElements[0]?this.currentFocusElement=this.focusableElements[this.focusableElements.length-1]:this.currentFocusElement=this.focusableElements[0],this.currentFocusElement.focus())},e.isChild=function(t){var e=t.parentNode;return!!e&&(e===this.overlay||this.isChild(e))},e.updateFocusableElements=function(){this.focusableElements=[].slice.call(this.overlay.querySelectorAll('video, audio, button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')).filter((function(t){return"true"!==t.getAttribute("disabled")&&!0!==t.getAttribute("disabled")}))},e.show=function(){var t=this;this.blockerAppended||(this.container=document.body.querySelector(".h5p-container"),this.container.appendChild(this.blocker)),this.blockerAppended=!0,this.overlay.classList.remove("h5p-crossword-invisible"),this.blocker.classList.remove("h5p-crossword-display-none"),setTimeout((function(){t.updateFocusableElements(),t.focusableElements.length>0&&t.focusableElements[0].focus();var e,n=t.overlay.querySelector(".h5p-advanced-text");n?t.callbacks.onRead(n.innerText):e=t.overlay.querySelector(".h5p-image > img"),e&&t.callbacks.onRead(e.getAttribute("alt")||""),t.isVisible=!0,t.resize()}),0)},e.hide=function(){this.isVisible=!1,this.overlay.classList.add("h5p-crossword-invisible"),this.blocker.classList.add("h5p-crossword-display-none")},e.resize=function(){this.container&&(this.content.style.maxHeight="calc(".concat(this.container.offsetHeight,"px - ").concat(t.CONTENT_MARGIN,")"))},t}();r.CONTENT_MARGIN="7em";var s=function(){function t(){var t=arguments.length>0&&void 0!==arguments[0]?arguments[0]:{};this.params=o.extend({a11y:{listLabel:""}},t),this.charMarked=null,this.content=this.buildListContainer({listLabel:this.params.a11y.listLabel})}var e=t.prototype;return e.getDOM=function(){return this.content},e.buildListContainer=function(t){var e=this,n=document.createElement("div");n.classList.add("h5p-crossword-input-fields-group-solution-container"),n.classList.add("h5p-crossword-display-none");var o=document.createElement("div");return o.classList.add("h5p-crossword-input-fields-group-solution-inner"),n.appendChild(o),this.list=document.createElement("div"),this.list.classList.add("h5p-crossword-input-fields-group-solution-word"),this.list.setAttribute("role","list"),this.list.setAttribute("aria-label",t.listLabel),this.list.setAttribute("aria-expanded","false"),this.list.setAttribute("tabindex","0"),o.appendChild(this.list),this.list.addEventListener("keydown",(function(t){var n=e.charMarked||e.list.firstChild,o=e.list.getAttribute("aria-expanded");switch(t.code){case"Enter":case"Space":if(t.target!==t.currentTarget)return;"false"===o?(e.list.setAttribute("aria-expanded","true"),n&&(n.setAttribute("tabindex","0"),n.focus())):(e.list.setAttribute("aria-expanded","false"),n&&n.setAttribute("tabindex","-1"))}})),n},e.buildListItem=function(t){var e=this,n=document.createElement("span");n.classList.add("h5p-crossword-input-fields-group-solution-char-wrapper"),n.setAttribute("role","listitem"),n.setAttribute("tabindex","-1"),n.setAttribute("aria-label",t.ariaLabel),"neutral"===t.result?(n.classList.add("h5p-crossword-solution-no-input")," "!==t.char&&t.char!==o.CHARACTER_PLACEHOLDER||n.classList.add("h5p-crossword-solution-no-char")):"correct"===t.result?n.classList.add("h5p-crossword-solution-correct"):n.classList.add("h5p-crossword-solution-wrong"),t.scoreExplanation&&n.appendChild(t.scoreExplanation),n.addEventListener("focus",(function(t){e.charMarked=t.target})),n.addEventListener("keydown",(function(t){var e=t.target.parentNode.firstChild,n=t.target.parentNode.lastChild;switch(t.keyCode){case 37:case 38:t.preventDefault(),t.target.previousSibling&&(t.target.setAttribute("tabindex","-1"),t.target.previousSibling.setAttribute("tabindex","0"),t.target.previousSibling.focus());break;case 39:case 40:t.preventDefault(),t.target.nextSibling&&(t.target.setAttribute("tabindex","-1"),t.target.nextSibling.setAttribute("tabindex","0"),t.target.nextSibling.focus());break;case 36:t.preventDefault(),t.target!==e&&(t.target.setAttribute("tabindex","-1"),e.setAttribute("tabindex","0"),e.focus());break;case 35:t.preventDefault(),t.target!==n&&(t.target.setAttribute("tabindex","-1"),n.setAttribute("tabindex","0"),n.focus())}}));var r=document.createElement("span");return r.classList.add("h5p-crossword-input-fields-group-solution-char"),r.innerHTML=t.char&&" "!==t.char.trim()?o.toUpperCase(t.char,o.UPPERCASE_EXCEPTIONS):"&nbsp;",n.appendChild(r),n},e.setChars=function(t){var e=this;this.reset(),t.forEach((function(t){e.list.appendChild(e.buildListItem(t))}))},e.show=function(){this.content.classList.remove("h5p-crossword-display-none")},e.hide=function(){this.content.classList.add("h5p-crossword-display-none")},e.enable=function(){if(this.tabindexState&&this.tabindexState.list&&this.list.setAttribute("tabindex",this.tabindexState.list),this.tabindexState&&this.tabindexState.listItems)for(var t=this.list.children,e=0;e<t.length;e++)t[e].setAttribute("tabindex",this.tabindexState.listItems[e])},e.disable=function(){for(var t=[],e=this.list.children,n=0;n<e.length;n++)t.push(e[n].getAttribute("tabindex")),e[n].setAttribute("tabindex","-1");this.tabindexState={list:this.list.getAttribute("tabindex"),listItems:t},this.list.setAttribute("tabindex","-1")},e.reset=function(){this.list.innerHTML="",this.list.setAttribute("aria-expanded","false"),this.list.setAttribute("tabindex","0"),this.charMarked=null,this.tabindexState=null},t}();function i(t,e){var n="undefined"!=typeof Symbol&&t[Symbol.iterator]||t["@@iterator"];if(!n){if(Array.isArray(t)||(n=function(t,e){if(!t)return;if("string"==typeof t)return a(t,e);var n=Object.prototype.toString.call(t).slice(8,-1);"Object"===n&&t.constructor&&(n=t.constructor.name);if("Map"===n||"Set"===n)return Array.from(t);if("Arguments"===n||/^(?:Ui|I)nt(?:8|16|32)(?:Clamped)?Array$/.test(n))return a(t,e)}(t))||e&&t&&"number"==typeof t.length){n&&(t=n);var o=0,r=function(){};return{s:r,n:function(){return o>=t.length?{done:!0}:{done:!1,value:t[o++]}},e:function(t){throw t},f:r}}throw new TypeError("Invalid attempt to iterate non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method.")}var s,i=!0,l=!1;return{s:function(){n=n.call(t)},n:function(){var t=n.next();return i=t.done,t},e:function(t){l=!0,s=t},f:function(){try{i||null==n.return||n.return()}finally{if(l)throw s}}}}function a(t,e){(null==e||e>t.length)&&(e=t.length);for(var n=0,o=new Array(e);n<e;n++)o[n]=t[n];return o}var l=function(){function t(){var t=this,e=arguments.length>0&&void 0!==arguments[0]?arguments[0]:{},n=arguments.length>1?arguments[1]:void 0;this.params=o.extend({l10n:{extraClue:"Extra clue",closeWindow:"Close Window"}},e),this.callbacks=n||{},this.callbacks.onFieldInput=this.callbacks.onFieldInput||function(){},this.callbacks.onRead=n.onRead||function(){},this.inputFields=[],this.extraClues=[],this.content=document.createElement("div"),this.content.classList.add("h5p-crossword-input-container");var s=this.buildInputFieldsGroup({words:this.params.words.filter((function(t){return"across"===t.orientation})),title:e.l10n.across});this.content.appendChild(s);var i=this.buildInputFieldsGroup({words:this.params.words.filter((function(t){return"down"===t.orientation})),title:e.l10n.down});this.content.appendChild(i),this.overlay=new r({l10n:{closeWindow:this.params.l10n.closeWindow}},{onClose:function(){t.handleOverlayClosed()},onRead:function(e){t.callbacks.onRead(e)}}),e.overlayContainer.appendChild(this.overlay.getDOM())}var e=t.prototype;return e.getDOM=function(){return this.content},e.buildInputFieldsGroup=function(t){var e=this;t.words=t.words.sort((function(t,e){return t.orientation<e.orientation}));var n=document.createElement("div");n.classList.add("h5p-crossword-input-fields-group");var r=document.createElement("div");return r.classList.add("h5p-crossword-input-fields-group-title"),r.innerText=t.title,n.appendChild(r),t.words.forEach((function(t){var r=document.createElement("div");r.classList.add("h5p-crossword-input-fields-group-wrapper");var i=document.createElement("div");i.classList.add("h5p-crossword-input-fields-group-wrapper-clue"),r.appendChild(i);var a=document.createElement("div");a.classList.add("h5p-crossword-input-fields-group-clue-id"),a.innerText=t.clueId,i.appendChild(a);var l=document.createElement("div");l.classList.add("h5p-crossword-input-fields-group-clue-content"),i.appendChild(l);var c=document.createElement("span");c.classList.add("h5p-crossword-input-fields-group-clue"),c.innerText=t.clue,l.appendChild(c);var u=document.createElement("span");if(u.classList.add("h5p-crossword-input-fields-group-answer-length"),u.innerText="(".concat(t.answer.split(" ").map((function(t){return t.length})).join(","),")"),l.appendChild(u),t.extraClue){var h=t.extraClue.library?t.extraClue.library.split(" ")[0]:null;if(h){var d=document.createElement("div");d.classList.add("h5p-crossword-extra-clue-instance-wrapper");var p=document.createElement("button");p.classList.add("h5p-crossword-input-fields-group-extra-clue");var f={clueId:t.clueId,orientation:t.orientation,clue:t.clue};p.setAttribute("aria-label",e.params.a11y.extraClueFor.replace("@clue",e.buildAriaLabel(f))),p.setAttribute("title",e.params.l10n.extraClue),l.appendChild(p),p.addEventListener("click",(function(){e.disabled||(e.disable(),"H5P.Video"===h?t.extraClue.params.fit=!1:"H5P.Audio"===h&&(t.extraClue.params.playerMode="full",t.extraClue.params.fitToWrapper=!0),e.overlay.setContent(d),e.previousFocus=p,e.overlay.show(),e.extraClueInstance=H5P.newRunnable(t.extraClue,e.params.contentId,H5P.jQuery(d)))})),e.extraClues.push(p)}}var m=document.createElement("input");m.classList.add("h5p-crossword-input-fields-group-input");var w={clueId:t.clueId,orientation:t.orientation,clue:t.clue,length:t.answer.length};m.setAttribute("aria-label",e.buildAriaLabel(w)),m.setAttribute("autocomplete","off"),m.setAttribute("autocorrect","off"),m.setAttribute("maxLength",t.answer.length),m.setAttribute("spellcheck","false"),e.setInputFieldValue(m,""),r.appendChild(m),m.addEventListener("focus",(function(){e.disabled||setTimeout((function(){e.callbacks.onFieldInput({clueId:t.clueId,orientation:t.orientation,cursorPosition:Math.min(m.selectionStart,t.answer.length-1),text:m.value,readOffset:-1})}),0)})),m.addEventListener("keydown",(function(n){if(-1===o.CONTROL_KEY_CODES.indexOf(n.keyCode)){var r=m.selectionStart;m.value="".concat(m.value.substr(0,r)).concat(m.value.substr(r+1)),m.selectionEnd=r,clearTimeout(e.tableUpdateTimeout),e.tableUpdateTimeout=setTimeout((function(){e.callbacks.onFieldInput({clueId:t.clueId,orientation:t.orientation,cursorPosition:Math.min(m.selectionStart,t.answer.length-1),text:m.value,readOffset:-1})}),0)}}),!1),m.addEventListener("keyup",(function(n){if(-1===o.CONTROL_KEY_CODES.indexOf(n.keyCode)||-1!==[8,35,36,37,38,39,40,46].indexOf(n.keyCode)){var r=m.selectionStart;"Home"===n.code||"ArrowUp"===n.code?r=0:"End"!==n.code&&"ArrowDown"!==n.code||(r=Math.min(m.value.length,m.getAttribute("maxLength")-1)),e.setInputFieldValue(m,m.value),m.setSelectionRange(r,r),e.callbacks.onFieldInput({clueId:t.clueId,orientation:t.orientation,cursorPosition:r,text:m.value,readOffset:-1===[8,37,38,39,40,46].indexOf(n.keyCode)?1:0})}})),m.addEventListener("paste",(function(t){if(!e.disabled){t.preventDefault();var n=t.clipboardData.getData("text");e.setInputFieldValue(m,n.substr(0,m.getAttribute("maxLength")))}}));var g=e.params.a11y.resultFor.replace("@clue","".concat(t.clueId," ").concat(e.params.a11y[t.orientation],". ").concat(t.clue," .")),v=new s({a11y:{listLabel:g}});r.appendChild(v.getDOM()),e.inputFields.push({clue:i,inputField:m,orientation:t.orientation,clueId:t.clueId,solution:v}),n.appendChild(r)})),n},e.setInputFieldValue=function(t,e){var n=arguments.length>2&&void 0!==arguments[2]?arguments[2]:{forceValue:!0};e=o.toUpperCase(e,o.UPPERCASE_EXCEPTIONS);var r="";if(n.forceValue){r=e;var s=new Array(t.maxLength+1).join(o.CHARACTER_PLACEHOLDER);r=s.split("").map((function(t,e){return r.length>e&&" "!==r[e]?r[e]:t})).join("")}else{var a,l=i(e.split(""));try{for(l.s();!(a=l.n()).done;){var c=a.value;if(" "===c)break;r="".concat(r).concat(c)}}catch(t){l.e(t)}finally{l.f()}}t.value=o.toUpperCase(r,o.UPPERCASE_EXCEPTIONS)},e.buildAriaLabel=function(t){var e=["".concat(t.clueId," ").concat(this.params.a11y[t.orientation],". ").concat(t.clue)];return t.length&&e.push(this.params.a11y.lettersWord.replace("@length",t.length)),e.join(", ")},e.fillFields=function(t){var e=this;t.forEach((function(t){var n=e.inputFields.filter((function(e){return e.orientation===t.orientation&&e.clueId===t.clueId}));n.length>0&&e.setInputFieldValue(n[0].inputField,t.text)}))},e.focusClue=function(t){this.inputFields.forEach((function(t){t.clue.classList.remove("h5p-crossword-input-fields-group-clue-highlight-focus")}));var e=this.inputFields.filter((function(e){return e.orientation===t.orientation&&e.clueId===t.clueId}));e.length>0&&e[0].clue.classList.add("h5p-crossword-input-fields-group-clue-highlight-focus")},e.checkAnswerWords=function(t){var e=this;this.scorePoints=this.scorePoints||new H5P.Question.ScorePoints,this.inputFields.forEach((function(n){n.solution.show();var r,s,i=t.filter((function(t){return t.clueId===n.clueId&&t.orientation===n.orientation})).shift(),a=[];a.push(i.answer),-1===i.score?(r=e.scorePoints.getElement(!1),s="wrong",a.push(e.params.a11y.wrong),a.push("-1 ".concat(e.params.a11y.point))):1===i.score?(r=e.scorePoints.getElement(!0),s="correct",a.push(e.params.a11y.correct),a.push("1 ".concat(e.params.a11y.point))):s="neutral",n.solution.setChars([{ariaLabel:"".concat(a.join(". "),"."),char:n.inputField.value.replace(o.CHARACTER_PLACEHOLDER," "),result:s,scoreExplanation:r}])}))},e.checkAnswer=function(t){var e=this;this.scorePoints=this.scorePoints||new H5P.Question.ScorePoints;var n=[];this.inputFields.forEach((function(r){r.solution.show();var s=t.filter((function(t){return"across"===r.orientation?t.clueIdAcross===r.clueId:"down"===r.orientation&&t.clueIdDown===r.clueId})),i=o.toUpperCase(r.inputField.value,o.UPPERCASE_EXCEPTIONS).split(""),a=[];s.forEach((function(t,r){var l=n.some((function(e){return e.row===t.position.row&&e.column===t.position.column}));n.push(t.position);var c,u,h=i.length>r?i[r]:" ";t.answer&&""!==t.answer.trim()&&t.answer!==o.CHARACTER_PLACEHOLDER?t.answer===t.solution?(c="correct",l||(u=e.scorePoints.getElement(!0))):e.params.applyPenalties?(c="wrong",l||(u=e.scorePoints.getElement(!1))):c="neutral":c="neutral";var d=[];d.push("".concat(e.params.a11y.letterSevenOfNine.replace("@position",r+1).replace("@length",s.length))),d.push(t.answer&&""!==t.answer.trim()?t.answer:e.params.a11y.empty),"correct"===c?(d.push(e.params.a11y.correct),d.push("1 ".concat(e.params.a11y.point))):"wrong"===c&&(d.push(e.params.a11y.wrong),d.push("-1 ".concat(e.params.a11y.point))),a.push({ariaLabel:"".concat(d.join(". "),"."),char:h.replace(o.CHARACTER_PLACEHOLDER," ")||"&nbsp;",result:c,scoreExplanation:u})})),r.solution.setChars(a)}))},e.showSolutions=function(){var t=this,e=arguments.length>0&&void 0!==arguments[0]?arguments[0]:[];this.inputFields.forEach((function(n){var o=e.filter((function(t){return t.clueId===n.clueId&&t.orientation===n.orientation}));if(o&&0!==o.length){o=o[0],t.setInputFieldValue(n.inputField,o.answer),n.inputField.readOnly=!0,n.inputField.removeAttribute("disabled");var r=t.params.a11y.solutionFor.replace("@clue","".concat(o.clueId," ").concat(t.params.a11y[o.orientation],". ").concat(o.clue," .")).replace("@solution",o.answer);n.inputField.setAttribute("aria-label",r),n.solution.disable()}}))},e.reset=function(){var t=this;this.inputFields.forEach((function(e){t.setInputFieldValue(e.inputField,""),e.inputField.readOnly=!1,e.clue.classList.remove("h5p-crossword-input-fields-group-clue-highlight-focus"),e.solution.hide(),e.solution.reset()}))},e.resize=function(){this.extraClueInstance&&this.extraClueInstance.trigger("resize"),this.overlay.resize()},e.enable=function(){this.inputFields.forEach((function(t){t.inputField.removeAttribute("disabled")})),this.extraClues.forEach((function(t){t.removeAttribute("disabled")})),this.content.classList.remove("h5p-crossword-disabled"),this.disabled=!1},e.disable=function(){this.disabled=!0,this.extraClues.forEach((function(t){t.setAttribute("disabled",!0)})),this.content.classList.add("h5p-crossword-disabled"),this.inputFields.forEach((function(t){t.inputField.setAttribute("disabled",!0)}))},e.unhighlight=function(){this.inputFields.forEach((function(t){t.clue.classList.remove("h5p-crossword-input-fields-group-clue-highlight-focus")}))},e.handleOverlayClosed=function(){this.extraClueInstance&&"function"==typeof this.extraClueInstance.pause&&this.extraClueInstance.pause(),this.overlay.hide(),this.enable(),this.previousFocus&&this.previousFocus.focus(),this.previousFocus=null},t}(),c=function(){function t(){var t=this,e=arguments.length>0&&void 0!==arguments[0]?arguments[0]:{},n=arguments.length>1&&void 0!==arguments[1]?arguments[1]:{};this.params=o.extend({instantFeedback:!1,clueIdMarker:null,solution:null},e),this.callbacks=n||{},this.callbacks.onClick=n.onClick||function(){},this.callbacks.onFocus=n.onFocus||function(){},this.callbacks.onKeyup=n.onKeyup||function(){},this.callbacks.onRead=n.onRead||function(){},this.enabled=!0,this.previousTabIndex=null,this.position={row:e.row,column:e.column},this.solutionWordId=null,this.cell=this.buildCell(e);var r=this.buildCellContentWrapper();if(this.cell.appendChild(r),this.params.solution?(this.cellInput=this.buildCellInput(e),r.appendChild(this.cellInput),this.cellCanvas=this.buildCellCanvas(),r.appendChild(this.cellCanvas),this.cell.addEventListener("click",(function(){t.enabled&&(t.callbacks.onClick(t.position),t.focus())}))):(this.cell.classList.add("h5p-crossword-cell-empty"),this.cell.setAttribute("aria-label",this.params.a11y.empty),this.params.hasBackgroundImage||(this.cell.style.backgroundColor=this.params.theme.backgroundColor)),this.params.clueIdMarker){var s=document.createElement("div");s.classList.add("h5p-crossword-cell-clue-id-marker"),s.innerText=this.params.clueIdMarker,r.appendChild(s)}}var e=t.prototype;return e.getDOM=function(){return this.cell},e.buildCell=function(t){var e=document.createElement("td");return e.classList.add("h5p-crossword-cell"),e.style.width="".concat(t.width,"%"),e.setAttribute("role","gridcell"),e.dataset.col=t.column,e.dataset.row=t.row,e},e.buildCellContentWrapper=function(){var t=document.createElement("div");return t.classList.add("h5p-crossword-cell-content-wrapper"),t},e.buildCellCanvas=function(){var t=document.createElement("div");return t.classList.add("h5p-crossword-cell-canvas"),t},e.buildCellInput=function(){var t=this,e=document.createElement("input");return e.classList.add("h5p-crossword-cell-content"),e.setAttribute("type","text"),e.setAttribute("maxLength",1),e.setAttribute("autocomplete","new-password"),e.setAttribute("autocorrect","off"),e.setAttribute("spellcheck","false"),e.setAttribute("tabindex","-1"),e.addEventListener("input",(function(t){t.preventDefault()})),e.addEventListener("change",(function(t){t.preventDefault()})),e.addEventListener("keydown",(function(e){if(t.enabled&&e.key&&"Unidentified"!==e.key&&("Delete"===e.key||"Backspace"===e.key)){var n=t.getAnswer()?0:-1;t.setAnswer("");var o=t.getInformation();o.keepPosition=!0,o.nextPositionOffset=n,t.cellInput.value="",t.callbacks.onKeyup(o)}})),e.addEventListener("keypress",(function(e){e.preventDefault(),t.enabled&&!e.repeat&&e.key&&"Unidentified"!==e.key&&(e.key.length>1||(t.setAnswer(o.toUpperCase(e.key,o.UPPERCASE_EXCEPTIONS),!0),t.cellInput.value="",t.callbacks.onKeyup(t.getInformation())))})),e.addEventListener("keyup",(function(e){if(t.enabled&&!(e.key&&"Unidentified"!==e.key||(e.preventDefault(),e.repeat)))if(-1!==o.CONTROL_KEY_CODES.indexOf(e.keyCode)){if(8===e.keyCode||46===e.keyCode){var n=t.getAnswer()?0:-1;t.setAnswer("");var r=t.getInformation();r.keepPosition=!0,r.nextPositionOffset=n,t.cellInput.value="",t.callbacks.onKeyup(r)}}else{if((187===e.keyCode||192===e.keyCode)&&"Dead"===e.key)return;if(""===t.cellInput.value.substr(0,1)&&229!==e.keyCode)return;t.setAnswer(t.cellInput.value,!0),t.cellInput.value="";var s=t.getInformation();t.callbacks.onKeyup(s)}})),e.addEventListener("focus",(function(e){t.callbacks.onFocus(t.position,e)})),e},e.getSolution=function(){return this.params.solution},e.getCurrentAnswer=function(){return this.cell.innerText.substr(0,1)},e.getInformation=function(){return{answer:this.answer?o.toUpperCase(this.answer,o.UPPERCASE_EXCEPTIONS):this.answer,clueIdAcross:this.params.clueIdAcross,clueIdDown:this.params.clueIdDown,position:this.position,score:this.getScore(),solution:this.params.solution,solutionWordId:this.solutionWordId||null}},e.getPosition=function(){return this.position},e.getClueId=function(){var t=arguments.length>0&&void 0!==arguments[0]?arguments[0]:"across";return"down"===t?this.params.clueIdDown:"across"===t?this.params.clueIdAcross:void 0},e.getAnswer=function(){return this.answer},e.getScore=function(){if(this.params.solution&&(" "!==this.params.solution||this.answer&&""!==this.answer.trim()&&this.answer!==o.CHARACTER_PLACEHOLDER))return this.answer&&""!==this.answer.trim()?this.answer!==this.params.solution?this.params.applyPenalties?-1:0:1:0},e.isFilled=function(){return this.params.solution?" "===this.params.solution?null:!(!this.answer||" "===this.answer):null},e.setTabIndex=function(t){isNaN(parseInt(t))||(this.cellInput?this.cellInput.setAttribute("tabindex",t):this.cell.setAttribute("tabindex",t))},e.setAriaLabel=function(t){this.cellInput.setAttribute("aria-label",t)},e.setSolutionState=function(t){if(this.cell.classList.remove("h5p-crossword-solution-correct"),this.cell.classList.remove("h5p-crossword-solution-wrong"),this.cell.classList.remove("h5p-crossword-solution-neutral"),t){var e="h5p-crossword-solution"+(t?"-".concat(t):"");this.cell.classList.add(e)}},e.setAnswer=function(t){var e=arguments.length>1&&void 0!==arguments[1]&&arguments[1];this.cellInput&&(""===t?(this.cellCanvas.innerText="",this.answer=void 0):(this.cellCanvas.innerText=o.toUpperCase(t.replace(new RegExp(o.CHARACTER_PLACEHOLDER,"g")," "),o.UPPERCASE_EXCEPTIONS),this.answer=o.toUpperCase(t,o.UPPERCASE_EXCEPTIONS)),this.params.instantFeedback&&this.checkAnswer(e))},e.setWidth=function(t){"number"!=typeof t||t<=0||(this.cell.style.width="".concat(t,"px"))},e.focus=function(){var t=this;setTimeout((function(){t.cellInput?t.cellInput.focus():t.cell.focus()}),0)},e.highlight=function(t){if(this.getSolution()||"focus"===t){var e="h5p-crossword-highlight"+(t?"-".concat(t):"");this.cell.classList.add(e)}},e.unhighlight=function(t){if(t){var e="h5p-crossword-highlight"+(t?"-".concat(t):"");this.cell.classList.remove(e)}else this.cell.classList.remove("h5p-crossword-highlight-normal"),this.cell.classList.remove("h5p-crossword-highlight-focus")},e.showSolutions=function(){this.params.solution&&(this.setAnswer(this.params.solution),this.setSolutionState())},e.checkAnswer=function(){var t=arguments.length>0&&void 0!==arguments[0]&&arguments[0],e=(this.answer||"").trim();e===this.params.solution&&""!==e?(this.setSolutionState("correct"),t&&this.callbacks.onRead(this.params.a11y.correct)):""===e||e===o.CHARACTER_PLACEHOLDER?this.setSolutionState():this.params.applyPenalties?(this.setSolutionState("wrong"),t&&this.callbacks.onRead(this.params.a11y.wrong)):(this.setSolutionState("neutral"),t&&this.callbacks.onRead(this.params.a11y.wrong))},e.reset=function(){this.setAnswer("",!1),this.unhighlight(),this.setSolutionState()},e.enable=function(){this.cellInput&&(this.previousTabIndex&&this.cell.setAttribute("tabindex",this.previousTabIndex),this.cellInput.removeAttribute("disabled")),this.enabled=!0},e.disable=function(){this.enabled=!1,this.cellInput&&this.cellInput.setAttribute("disabled","disabled"),this.previousTabIndex=this.cell.getAttribute("tabindex"),this.cell.removeAttribute("tabindex")},e.addSolutionWordIdMarker=function(t){t&&(this.solutionWordMarker=document.createElement("div"),this.solutionWordMarker.classList.add("h5p-crossword-cell-solution-word-marker"),this.solutionWordMarker.innerText=t,this.cell.insertBefore(this.solutionWordMarker,this.cell.firstChild),this.solutionWordCircle=document.createElement("div"),this.solutionWordCircle.classList.add("h5p-crossword-cell-solution-word-circle"),this.cell.insertBefore(this.solutionWordCircle,this.cell.firstChild),this.solutionWordId=t)},t}();function u(t){return function(t){if(Array.isArray(t))return h(t)}(t)||function(t){if("undefined"!=typeof Symbol&&null!=t[Symbol.iterator]||null!=t["@@iterator"])return Array.from(t)}(t)||function(t,e){if(!t)return;if("string"==typeof t)return h(t,e);var n=Object.prototype.toString.call(t).slice(8,-1);"Object"===n&&t.constructor&&(n=t.constructor.name);if("Map"===n||"Set"===n)return Array.from(t);if("Arguments"===n||/^(?:Ui|I)nt(?:8|16|32)(?:Clamped)?Array$/.test(n))return h(t,e)}(t)||function(){throw new TypeError("Invalid attempt to spread non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method.")}()}function h(t,e){(null==e||e>t.length)&&(e=t.length);for(var n=0,o=new Array(e);n<e;n++)o[n]=t[n];return o}var d=function(){function t(){var t,e=this,n=arguments.length>0&&void 0!==arguments[0]?arguments[0]:{},r=arguments.length>1?arguments[1]:void 0;this.params=o.extend({},n),this.params.theme.backgroundImage=this.params.theme.backgroundImage||null,this.callbacks=r||{},this.callbacks.onInput=this.callbacks.onInput||function(){},this.callbacks.onFocus=this.callbacks.onFocus||function(){},this.callbacks.onRead=r.onRead||function(){},this.currentPosition={},this.currentOrientation="across",this.maxScore=null,this.cells=this.buildCells(this.params.dimensions,this.params.words),this.content=this.buildGrid(this.params),(t=[]).concat.apply(t,u(this.cells)).filter((function(t){return null!==t.getSolution()}))[0].setTabIndex("0"),this.content.addEventListener("keydown",(function(t){if(!e.disabled){var n,o,r=t.target;switch(t.target.classList.contains("h5p-crossword-cell-content")&&(r=t.target.parentNode.parentNode),t.key){case"ArrowRight":t.preventDefault(),e.setcurrentOrientation("across",{row:parseInt(r.dataset.row),column:parseInt(r.dataset.col)+1}),e.moveTo({row:parseInt(r.dataset.row),column:parseInt(r.dataset.col)+1});break;case"ArrowLeft":t.preventDefault(),e.setcurrentOrientation("across",{row:parseInt(r.dataset.row),column:parseInt(r.dataset.col)-1}),e.moveTo({row:parseInt(r.dataset.row),column:parseInt(r.dataset.col)-1});break;case"ArrowDown":t.preventDefault(),e.setcurrentOrientation("across",{row:parseInt(r.dataset.row)+1,column:parseInt(r.dataset.col)}),e.moveTo({row:parseInt(r.dataset.row)+1,column:parseInt(r.dataset.col)});break;case"ArrowUp":t.preventDefault(),e.setcurrentOrientation("across",{row:parseInt(r.dataset.row)-1,column:parseInt(r.dataset.col)}),e.moveTo({row:parseInt(r.dataset.row)-1,column:parseInt(r.dataset.col)});break;case"Home":t.preventDefault(),t.ctrlKey?e.moveTo({row:0,column:0}):e.moveTo({row:parseInt(r.dataset.row),column:0});break;case"End":t.preventDefault(),t.ctrlKey?e.moveTo({row:e.params.dimensions.rows-1,column:e.params.dimensions.columns-1}):e.moveTo({row:parseInt(r.dataset.row),column:document.querySelector('[data-row="'+r.dataset.row+'"]:last-of-type').dataset.col});break;case"PageUp":t.preventDefault(),n=0;do{o=e.moveTo({row:n,column:r.dataset.col}),n++}while(!1===o);break;case"PageDown":t.preventDefault(),n=e.params.dimensions.rows-1;do{o=e.moveTo({row:n,column:r.dataset.col}),n--}while(!1===o)}}}))}var e=t.prototype;return e.getDOM=function(){return this.content},e.buildCells=function(t){for(var e,n=this,r=arguments.length>1&&void 0!==arguments[1]?arguments[1]:[],s=o.createArray(t.rows,t.columns),i=0;i<t.rows;i++)for(var a=0;a<t.columns;a++)s[i][a]={row:i,column:a,solution:null,id:null};r.forEach((function(t){for(var e=t.starty-1,n=t.startx-1,o=0;o<t.answer.length;o++)"none"!==t.orientation&&(s[e][n]={row:e,column:n,solution:t.answer.substr(o,1),solutionLength:t.answer.length,solutionIndex:o+1,clue:t.clue,clueIdAcross:"across"===t.orientation?t.clueId:s[e][n].clueIdAcross,clueIdDown:"down"===t.orientation?t.clueId:s[e][n].clueIdDown,clueIdMarker:0===o?t.clueId:s[e][n].clueIdMarker},"down"===t.orientation?e++:n++)}));var l=o.createArray(t.rows,t.columns);return(e=[]).concat.apply(e,u(s)).forEach((function(e){l[e.row][e.column]=new c({row:e.row,column:e.column,solution:e.solution,solutionIndex:e.solutionIndex,solutionLength:e.solutionLength,width:100/t.columns,clueIdMarker:e.clueIdMarker,clue:e.clue,clueIdAcross:e.clueIdAcross,clueIdDown:e.clueIdDown,instantFeedback:n.params.instantFeedback,applyPenalties:n.params.applyPenalties,hasBackgroundImage:!!n.params.theme.backgroundImage,theme:n.params.theme,a11y:{correct:n.params.a11y.correct,wrong:n.params.a11y.wrong,empty:n.params.a11y.empty}},{onClick:function(t){n.handleCellClick(t)},onFocus:function(t,e){n.handleCellFocus(t,e)},onKeyup:function(t){n.handleCellKeyup(t)},onRead:function(t){n.callbacks.onRead(t)}})})),l},e.findSolutionWordCells=function(t){var e;if(!t||""===t)return[];var n=[],r=!0,s=(e=[]).concat.apply(e,u(this.cells)).filter((function(t){return null!==t.getSolution()}));return t.split("").forEach((function(t){if(!1!==r){var e=o.shuffleArray(s.filter((function(e){return e.getSolution()===t&&-1===n.indexOf(e)})));0!==e.length?n.push(e[0]):r=!1}})),n.length===t.length?n:[]},e.addSolutionWord=function(t){if(!t||""===t)return!1;var e=this.findSolutionWordCells(t);return e.forEach((function(t,e){t.addSolutionWordIdMarker(e+1)})),e.length>0},e.buildGrid=function(t){var e=document.createElement("table");if(e.classList.add("h5p-crossword-grid"),e.style.backgroundColor=t.theme.backgroundColor,t.theme.backgroundImage){e.classList.add("h5p-crossword-grid-background-image");var n=document.createElement("img");H5P.setSource(n,t.theme.backgroundImage,t.contentId),e.style.backgroundImage="url('".concat(n.src,"')")}e.setAttribute("role","grid"),e.setAttribute("aria-label",this.params.a11y.crosswordGrid);var o=document.createElement("tbody");o.setAttribute("role","rowgroup");for(var r=0;r<t.dimensions.rows;r++){var s=this.buildGridRow(t.dimensions,r);o.appendChild(s)}return e.appendChild(o),e},e.buildGridRow=function(t,e){var n=document.createElement("tr");n.setAttribute("role","row");for(var o=0;o<t.columns;o++)n.appendChild(this.cells[e][o].getDOM());return n},e.moveTo=function(){var t,e=arguments.length>0&&void 0!==arguments[0]?arguments[0]:{},n=arguments.length>1&&void 0!==arguments[1]&&arguments[1];if(e.row<0||e.row>this.params.dimensions.rows-1)return!1;if(e.column<0||e.column>this.params.dimensions.columns-1)return!1;var o=this.cells[e.row][e.column];return!!o&&((t=[]).concat.apply(t,u(this.cells)).forEach((function(t){t.setTabIndex("-1")})),o.setTabIndex("0"),this.currentPosition=e,this.focusCell(e,n),!0)},e.getUpdates=function(t){var e,n=this,o=[],r="across"===this.currentOrientation?"down":"across",s=this.cells[t.row][t.column].getClueId(r);if(s){var i,a=(i=[]).concat.apply(i,u(this.cells)).filter((function(t){return t.getClueId(r)===s})).reduce((function(t,e){return t+(e.answer||" ")}),"").replace(/[\s\uFEFF\xA0]+$/g,"");o.push({clueId:s,orientation:r,text:a})}var l=this.cells[t.row][t.column].getClueId(this.currentOrientation),c=(e=[]).concat.apply(e,u(this.cells)).filter((function(t){return t.getClueId(n.currentOrientation)===l})).reduce((function(t,e){return t+(e.answer||" ")}),"").replace(/[\s\uFEFF\xA0]+$/g,"");return o.push({clueId:l,orientation:this.currentOrientation,text:c}),o},e.getAnswers=function(){var t;return(t=[]).concat.apply(t,u(this.cells)).map((function(t){return t.getAnswer()}))},e.setAnswers=function(t){var e,n=this;(e=[]).concat.apply(e,u(this.cells)).forEach((function(e,o){if(e.setAnswer(t[o]||""),e.getSolution()){var r=e.getInformation();n.callbacks.onInput({answer:r.answer,inputFieldUpdates:n.getUpdates(r.position),clueId:r.clueId,solutionWordId:r.solutionWordId||null,checkFilled:!0})}}))},e.getScore=function(){var t,e,n=this;this.params.scoreWords?t=this.params.words.reduce((function(t,e){return t+n.getWordScore(e.clueId,e.orientation)}),0):t=(e=[]).concat.apply(e,u(this.cells)).reduce((function(t,e){return t+(e.getScore()||0)}),0);return Math.max(0,t)},e.getMaxScore=function(){var t;this.params.scoreWords?this.maxScore=this.params.words.length:this.maxScore=this.maxScore||(t=[]).concat.apply(t,u(this.cells)).reduce((function(t,e){return t+(void 0!==e.getScore()?1:0)}),0);return this.maxScore},e.getWordScore=function(t){var e=arguments.length>1&&void 0!==arguments[1]?arguments[1]:"across",n=this.getWordInformation(t,e),o=n.reduce((function(t,e){return-1===t||-1===e.score?-1:t+(1===e.score||void 0===e.score?1:0)}),0);return-1===o?-1:o===n.length?1:0},e.setcurrentOrientation=function(t,e){if(("across"===t||"down"===t)&&("number"==typeof(e=e||this.currentPosition).row&&"number"==typeof e.column&&!(e.row<0||e.row>this.params.dimensions.rows-1)&&!(e.column<0||e.column>this.params.dimensions.columns-1)&&this.cells[e.row][e.column].getSolution())){var n=e.column>0&&this.cells[e.row][e.column-1].getSolution(),o=e.column<this.params.dimensions.columns-1&&this.cells[e.row][e.column+1].getSolution(),r=e.row>0&&this.cells[e.row-1][e.column].getSolution(),s=e.row<this.params.dimensions.rows-1&&this.cells[e.row+1][e.column].getSolution();return"across"!==t||n||o?("down"!==t||r||s)&&(n||o||r||s)||(t="across"):t="down",this.currentOrientation=t,t}},e.reset=function(){var t;(t=[]).concat.apply(t,u(this.cells)).forEach((function(t){t.reset()})),this.currentPosition={},this.currentOrientation="across",this.maxScore=null},e.resize=function(){var t=this.content.clientWidth/this.params.dimensions.columns;this.content.style.fontSize="".concat(t/2,"px")},e.handleCellClick=function(t){var e=arguments.length>1&&void 0!==arguments[1]&&arguments[1];if(this.ignoreNextClick)this.ignoreNextClick=!1;else{var n=this.cells[t.row][t.column];n.getSolution()&&(e||(n.getClueId("across")?this.currentPosition.row===t.row&&this.currentPosition.column===t.column&&"across"===this.currentOrientation?this.setcurrentOrientation("down",t):this.setcurrentOrientation("across",t):this.setcurrentOrientation("down",t)),this.currentPosition=t,this.moveTo(t,!0))}},e.handleCellFocus=function(t,e){this.cells[t.row][t.column].getSolution()&&(e.relatedTarget&&(e.relatedTarget.classList.contains("h5p-crossword-cell")||e.relatedTarget.classList.contains("h5p-crossword-cell-content"))||(this.setcurrentOrientation(this.currentOrientation,t),this.handleCellClick(t,!0),this.ignoreNextClick="boolean"!=typeof this.ignoreNextClick||this.ignoreNextClick))},e.handleCellKeyup=function(t){void 0===t.nextPositionOffset&&(t.nextPositionOffset=1),(!this.currentOrientation||"across"===this.currentOrientation)&&t.position.column+t.nextPositionOffset>=0&&t.position.column+t.nextPositionOffset<this.params.dimensions.columns&&this.cells[t.position.row][t.position.column+t.nextPositionOffset].getSolution()?(this.currentOrientation="across",this.focusCell({row:t.position.row,column:t.position.column+t.nextPositionOffset})):(!this.currentOrientation||"down"===this.currentOrientation)&&t.position.row+t.nextPositionOffset>=0&&t.position.row+t.nextPositionOffset<this.params.dimensions.rows&&this.cells[t.position.row+t.nextPositionOffset][t.position.column].getSolution()&&(this.currentOrientation="down",this.focusCell({row:t.position.row+t.nextPositionOffset,column:t.position.column})),this.callbacks.onInput({answer:t.answer,inputFieldUpdates:this.getUpdates(t.position),clueId:t.clueId,solutionWordId:t.solutionWordId||null,checkFilled:!0})},e.showSolutions=function(){var t;(t=[]).concat.apply(t,u(this.cells)).forEach((function(t){t.showSolutions()}))},e.checkAnswerWords=function(){var t,e=this,n=this.params.words.map((function(t){return{clueId:t.clueId,orientation:t.orientation,answer:t.answer,score:e.getWordScore(t.clueId,t.orientation)}}));return(t=[]).concat.apply(t,u(this.cells)).forEach((function(t){t.checkAnswer()})),n},e.checkAnswer=function(){var t,e=[];return(t=[]).concat.apply(t,u(this.cells)).forEach((function(t){t.checkAnswer();var n=t.getInformation();n.solution&&e.push(n)})),e},e.highlightWord=function(t){var e,n=this,o=arguments.length>1&&void 0!==arguments[1]?arguments[1]:"across",r=this.cells[t.row][t.column].getClueId(o);if(r){var s=this.params.words.filter((function(t){return t.clueId===r&&t.orientation===o}))[0];(e=[]).concat.apply(e,u(this.cells)).filter((function(t){return t.getClueId(o)===r})).forEach((function(t,e){var i=t.getPosition(),a={row:i.row,column:i.column,clueId:r,orientation:o,clue:s.clue,position:e,length:s.answer.length};t.setAriaLabel(n.buildAriaLabel(a)),t.highlight("normal")}))}},e.buildAriaLabel=function(t){var e="".concat(this.params.a11y.row," ").concat(t.row+1,", ").concat(this.params.a11y.column," ").concat(t.column+1),n="".concat(t.clueId," ").concat(this.params.a11y[t.orientation],". ").concat(t.clue),o="".concat(this.params.a11y.letterSevenOfNine.replace("@position",t.position+1).replace("@length",t.length));return"".concat(e,". ").concat(n,", ").concat(o,".")},e.getFocus=function(){return{position:this.currentPosition,orientation:this.currentOrientation}},e.getWordInformation=function(t){var e,n=arguments.length>1&&void 0!==arguments[1]?arguments[1]:"across";return t?(e=[]).concat.apply(e,u(this.cells)).filter((function(e){return e.getClueId(n)===t})).map((function(t){return t.getInformation()})):""},e.focusCell=function(t){var e=arguments.length>1&&void 0!==arguments[1]&&arguments[1];this.clearCellHighlights(),this.setcurrentOrientation(this.currentOrientation,t),this.highlightWord(t,this.currentOrientation),this.cells[t.row][t.column].highlight("focus"),this.callbacks.onFocus({clueId:this.cells[t.row][t.column].getClueId(this.currentOrientation),orientation:this.currentOrientation}),e||this.cells[t.row][t.column].focus()},e.clearCellHighlights=function(){var t;(t=[]).concat.apply(t,u(this.cells)).forEach((function(t){t.unhighlight()}))},e.fillGrid=function(t){var e,n=this,o=(e=[]).concat.apply(e,u(this.cells)).filter((function(e){return e.getClueId(t.orientation)===t.clueId}));if(o.forEach((function(e,o){if(e.setAnswer(t.text[o]||"",-1!==t.readOffset&&o===t.cursorPosition-t.readOffset),e.getClueId("down")&&e.getClueId("across")){var r="across"===t.orientation?n.getWordInformation(e.getClueId("down"),"down"):n.getWordInformation(e.getClueId("across"),"across"),s=[{clueId:"across"===t.orientation?e.getClueId("down"):e.getClueId("across"),orientation:"across"===t.orientation?"down":"across",text:r.reduce((function(t,e){return"".concat(t).concat(e.answer||" ")}),"")}];n.callbacks.onInput({inputFieldUpdates:s})}var i=e.getInformation();i.solutionWordId&&n.callbacks.onInput(i)})),t.cursorPosition<o.length){var r=o[t.cursorPosition].position;this.setcurrentOrientation(t.orientation,r),this.moveTo(r,!0)}this.callbacks.onInput({checkFilled:!0})},e.enable=function(){var t;(t=[]).concat.apply(t,u(this.cells)).forEach((function(t){t.enable()})),this.disabled=!1},e.disable=function(){var t;this.disabled=!0,(t=[]).concat.apply(t,u(this.cells)).forEach((function(t){t.disable()}))},e.isFilled=function(){var t;return!(t=[]).concat.apply(t,u(this.cells)).some((function(t){return!1===t.isFilled()}))},e.unhighlight=function(){var t,e=this;(t=[]).concat.apply(t,u(this.cells)).forEach((function(t){t.unhighlight("focus"),t.unhighlight("normal"),e.params.instantFeedback||t.setSolutionState()}))},e.getXAPICorrectResponsesPattern=function(){var t=this,e=this.params.words.map((function(e){var n=t.getWordInformation(e.clueId,e.orientation).map((function(t){return t.solution}));return t.params.scoreWords?n.join(""):n.join("[,]")})).join("[,]");return["".concat("{case_matters=false}").concat(e)]},e.getXAPIResponse=function(){var t=this;return this.params.words.map((function(e){var n=t.getWordInformation(e.clueId,e.orientation);return t.params.scoreWords?n.map((function(t){return t.answer||" "})).join(""):n.map((function(t){return t.answer||""})).join("[,]")})).join("[,]")},e.getXAPIDescription=function(){var e=this;return this.params.words.map((function(n){var o="".concat(n.clueId," ").concat(e.params.l10n[n.orientation],": ").concat(n.clue),r=[];if(e.params.scoreWords)r.push(t.XAPI_PLACEHOLDER);else for(;r.length<n.answer.length;)r.push(t.XAPI_PLACEHOLDER);return"<p>".concat(o,"</ br>").concat(r.join(" "),"</p>")})).join("")},t}();d.XAPI_PLACEHOLDER="__________";var p=function(){function t(){var t=arguments.length>0&&void 0!==arguments[0]?arguments[0]:{};this.solutionWord=o.toUpperCase(t.solutionWord.replace(/\s/g,""),o.UPPERCASE_EXCEPTIONS),this.scaleWidth=Math.max(t.tableWidth,this.solutionWord.length),this.cells=this.createCells(this.solutionWord),this.content=this.createSolution(this.cells)}var e=t.prototype;return e.getDOM=function(){return this.content},e.createSolution=function(t){var e=document.createElement("div");e.classList.add("h5p-crossword-solution-word-wrapper");var n=document.createElement("table");n.classList.add("h5p-crossword-solution-word"),n.setAttribute("aria-hidden",!0),e.appendChild(n);var o=document.createElement("tr");return t.forEach((function(t){o.appendChild(t.getDOM())})),n.appendChild(o),e},e.createCells=function(t){var e=o.createArray(t.length);return t.split("").forEach((function(n,o){e[o]=new c({width:100/t.length,solution:t[o],clueIdMarker:o+1}),e[o].disable()})),e},e.setCell=function(t,e){this.cells[t].setAnswer(e||"")},e.showSolutions=function(){this.cells.forEach((function(t){t.showSolutions()}))},e.reset=function(){this.cells.forEach((function(t){t.reset()}))},e.resize=function(){var t=this.content.clientWidth/this.scaleWidth;this.content.style.fontSize="".concat(t/2,"px"),this.cells.forEach((function(e){e.setWidth(t)}))},t}(),f=function(){function t(e){this.params=o.extend({words:[{answer:"BAT",clue:"BAT"},{answer:"CAT",clue:"CAT"}],config:{poolSize:0}},e||{}),this.params.words=this.params.words.filter((function(t){return t.answer&&t.clue})).map((function(t){var e={answer:o.toUpperCase(t.answer,o.UPPERCASE_EXCEPTIONS),clue:t.clue,extraClue:t.extraClue};return t.fixWord&&void 0!==t.row&&void 0!==t.column&&void 0!==t.orientation&&(e.row=t.row-1,e.column=t.column-1,e.orientation=t.orientation),e})),this.indexChar={},this.badWords,this.cells=o.createArray(t.GRID_ROWS,t.GRID_COLUMNS),this.wordElements=this.createWordElements(this.params.words,this.params.config.poolSize)}var e=t.prototype;return e.getSquareGrid=function(){for(var t=arguments.length>0&&void 0!==arguments[0]?arguments[0]:10,e=null,n=0,o=0;o<t;o++){var r=this.getGrid(10);if(null!==r){var s=1*Math.min(r.length,r[0].length)/Math.max(r.length,r[0].length);if(s>n&&(e=r,n=s),1===n)break}}return e},e.getGrid=function(){for(var t,e=this,n=arguments.length>0&&void 0!==arguments[0]?arguments[0]:10,o=0;o<n;o++){this.resetGrid();var r=this.wordElements.filter((function(t){return void 0!==t.row}));if(r.length>0){if(r.forEach((function(t){if(!1===e.canPlaceAnswerAt(t.answer,{row:t.row,column:t.column,orientation:t.orientation}))return e.badWords=[t],null;e.placeAnswerAt(t,{row:t.row,column:t.column,orientation:t.orientation})})),r.length>=this.params.config.poolSize||r.length===this.wordElements.length)return this.minimizeGrid()}else{var s=Math.floor(this.cells.length/2),i=Math.floor(this.cells[0].length/2),a=this.wordElements[0],l=this.getRandomOrientation();if("across"===l?i-=Math.floor(a.answer.length/2):s-=Math.floor(a.answer.length/2),!1===this.canPlaceAnswerAt(a.answer,{row:s,column:i,orientation:l}))return this.badWords=[a],null;this.placeAnswerAt(a,{row:s,column:i,orientation:l})}this.groups=[],r.length>0?this.groups.push(this.wordElements.slice(r.length)):this.groups.push(this.wordElements.slice(1));for(var c=0;c<this.groups.length;c++){t=!1;for(var u=0;u<this.groups[c].length;u++){var h=this.groups[c][u],d=this.findPositionForWord(h.answer);d?(this.placeAnswerAt(h,d),t=!0):(this.groups.length-1===c&&this.groups.push([]),this.groups[c+1].push(h))}if(!t)break}if(t)return this.minimizeGrid()}return this.badWords=this.groups[this.groups.length-1],null},e.getBadWords=function(){return this.badWords},e.getRandomOrientation=function(){return Math.floor(2*Math.random())?"across":"down"},e.minimizeGrid=function(){for(var e=t.GRID_ROWS-1,n=0,r=t.GRID_COLUMNS-1,s=0,i=0;i<t.GRID_ROWS;i++)for(var a=0;a<t.GRID_COLUMNS;a++){null!==this.cells[i][a]&&(i<e&&(e=i),i>n&&(n=i),a<r&&(r=a),a>s&&(s=a))}for(var l=n-e+1,c=s-r+1,u=o.createArray(l,c),h=e,d=0;d<l;h++,d++)for(var p=r,f=0;f<c;p++,f++)u[d][f]=this.cells[h][p];return u},e.addCellToGrid=function(t,e,n){var o=t.answer.charAt(n);null===this.cells[e.row][e.column]&&(this.cells[e.row][e.column]={char:o},this.indexChar[o]=this.indexChar[o]||[],this.indexChar[o].push({row:e.row,column:e.column})),this.cells[e.row][e.column][e.orientation]={isStartOfWord:0===n,index:t.index}},e.placeAnswerAt=function(t,e){if("across"===e.orientation)for(var n=e.column,o=0;n<e.column+t.answer.length;n++,o++)this.addCellToGrid(t,{row:e.row,column:n,orientation:e.orientation},o);else{if("down"!==e.orientation)throw"Invalid orientation";for(var r=e.row,s=0;r<e.row+t.answer.length;r++,s++)this.addCellToGrid(t,{row:r,column:e.column,orientation:e.orientation},s)}},e.canPlaceCharAt=function(t,e){return null===this.cells[e.row][e.column]?0:this.cells[e.row][e.column].char===t&&1},e.canPlaceAnswerAt=function(t,e){if(e.row<0||e.row>=this.cells.length||e.column<0||e.column>=this.cells[e.row].length)return!1;if("across"===e.orientation){for(var n=0;n<t.length;n++){var o=this.cells[e.row][e.column+n];if(!o||o.char!==t[n])break;if(n===t.length-1)return!1}if(e.column+t.length>this.cells[e.row].length)return!1;if(e.column-1>=0&&null!==this.cells[e.row][e.column-1])return!1;if(e.column+t.length<this.cells[e.row].length&&null!==this.cells[e.row][e.column+t.length])return!1;for(var r=e.row-1,s=e.column,i=0;r>=0&&s<e.column+t.length;s++,i++){var a=null===this.cells[r][s],l=null!==this.cells[e.row][s]&&this.cells[e.row][s].char===t.charAt(i);if(!a&&!l)return!1}for(var c=e.row+1,u=e.column,h=0;c<this.cells.length&&u<e.column+t.length;u++,h++){var d=null===this.cells[c][u],p=null!==this.cells[e.row][u]&&this.cells[e.row][u].char===t.charAt(h);if(!d&&!p)return!1}for(var f=e.column,m=0;f<e.column+t.length;f++,m++){if(!1===this.canPlaceCharAt(t.charAt(m),{row:e.row,column:f}))return!1}}else{if("down"!==e.orientation)throw"Invalid Orientation";for(var w=0;w<t.length;w++){var g=this.cells[e.row+w][e.column];if(!g||g.char!==t[w])break;if(w===t.length-1)return!1}if(e.row+t.length>this.cells.length)return!1;if(e.row-1>=0&&null!==this.cells[e.row-1][e.column])return!1;if(e.row+t.length<this.cells.length&&null!==this.cells[e.row+t.length][e.column])return!1;for(var v=e.column-1,b=e.row,C=0;v>=0&&b<e.row+t.length;b++,C++){var y=null===this.cells[b][v],I=null!==this.cells[b][e.column]&&this.cells[b][e.column].char===t.charAt(C);if(!(y||I))return!1}for(var A=e.column+1,E=e.row,S=0;E<e.row+t.length&&A<this.cells[E].length;E++,S++){var k=null===this.cells[E][A],x=null!==this.cells[E][e.column]&&this.cells[E][e.column].char===t.charAt(S);if(!(k||x))return!1}for(var L=e.row,P=0;L<e.row+t.length;L++,P++){if(!1===this.canPlaceCharAt(t.charAt(P,1),{row:L,column:e.column}))return!1}}return!0},e.findPositionForWord=function(t){for(var e=[],n=0;n<t.length;n++){var o=this.indexChar[t.charAt(n)];if(o)for(var r=0;r<o.length;r++){var s=o[r],i=s.row,a=s.column,l=this.canPlaceAnswerAt(t,{row:i,column:a-n,orientation:"across"}),c=this.canPlaceAnswerAt(t,{row:i-n,column:a,orientation:"down"});!1!==l&&e.push({intersections:l,row:i,column:a-n,orientation:"across"}),!1!==c&&e.push({intersections:c,row:i-n,column:a,orientation:"down"})}}return 0!==e.length&&e[Math.floor(Math.random()*e.length)]},e.resetGrid=function(){for(var t=0;t<this.cells.length;t++)for(var e=0;e<this.cells[t].length;e++)this.cells[t][e]=null;this.indexChar={}},e.createWordElements=function(t,e){e="number"!=typeof e||0===e?null:Math.max(2,e);var n=t.map((function(t,e){return t.index=e,t}));if(e){var r=n.filter((function(t){return void 0!==t.row})),s=o.shuffleArray(n.filter((function(t){return void 0===t.row})));s.splice(Math.max(0,e-r.length),s.length),n=r.concat(s)}return n.sort((function(t,e){var n=void 0!==t.row?1:0,o=void 0!==e.row?1:0;return n<o?1:n>o?-1:e.answer.length-t.answer.length}))},e.getWordElement=function(t,e){if("number"!=typeof t)return null;var n=this.wordElements.filter((function(e){return e.index===t}));return n.length<1?null:"string"!=typeof e?n[0]:n[0][e]},e.export=function(t){for(var e=t.length,n=t[0].length,o=[],r=1,s=0;s<e;s++)for(var i=0;i<n;i++){var a=t[s][i];null!==a&&(a.down&&a.down.isStartOfWord&&o.push({clue:this.getWordElement(a.down.index,"clue"),answer:this.getWordElement(a.down.index,"answer"),extraClue:this.getWordElement(a.down.index,"extraClue"),startx:i+1,starty:s+1,orientation:"down",clueId:r}),a.across&&a.across.isStartOfWord&&o.push({clue:this.getWordElement(a.across.index,"clue"),answer:this.getWordElement(a.across.index,"answer"),extraClue:this.getWordElement(a.across.index,"extraClue"),startx:i+1,starty:s+1,orientation:"across",clueId:r}),(a.down&&a.down.isStartOfWord||a.across&&a.across.isStartOfWord)&&r++)}return{rows:e,cols:n,result:o}},t}();f.GRID_ROWS=100,f.GRID_COLUMNS=100;var m=function(){function e(){var n=this,o=arguments.length>0&&void 0!==arguments[0]?arguments[0]:{},r=arguments.length>1?arguments[1]:void 0;if(this.params=o,this.contentId=o.contentId,this.content=document.createElement("div"),this.content.classList.add("h5p-crossword-content"),this.callbacks=r||{},this.callbacks.onInitialized=r.onInitialized||function(){},this.callbacks.onRead=r.onRead||function(){},this.callbacks.onTableFilled=r.onTableFilled||function(){},this.answerGiven=!1,this.params.previousState&&this.params.previousState.crosswordLayout)this.crosswordLayout=this.params.previousState.crosswordLayout;else{var s,i,a;if(o.words.length<2?s=o.l10n.couldNotGenerateCrosswordTooFewWords:(a=(i=new f({words:o.words,config:{poolSize:o.poolSize}})).getSquareGrid(e.MAXIMUM_TRIES))||(s=o.l10n.couldNotGenerateCrossword),s){if(i){var c=i.getBadWords().map((function(t){return"".concat(t.answer)})).join(", ");s="".concat(s," ").concat(o.l10n.problematicWords.replace(/@words/g,c))}var u=document.createElement("div");return u.classList.add("h5p-crossword-message"),u.innerText=s,this.content.appendChild(u),this.couldNotGenerateCrossword=!0,void this.callbacks.onInitialized(!1)}this.crosswordLayout=i.export(a)}var h=document.createElement("div");h.classList.add("h5p-crossword-table-wrapper"),this.clueAnnouncer=new t,h.appendChild(this.clueAnnouncer.getDOM()),this.table=new d({scoreWords:this.params.scoreWords,applyPenalties:this.params.applyPenalties,theme:this.params.theme,contentId:this.contentId,dimensions:{rows:this.crosswordLayout.rows,columns:this.crosswordLayout.cols},instantFeedback:this.params.instantFeedback,solutionWord:this.params.solutionWord,words:this.crosswordLayout.result,a11y:this.params.a11y,l10n:{across:this.params.l10n.across,down:this.params.l10n.down}},{onInput:function(t){n.handleTableInput(t)},onFocus:function(t){n.handleTableFocus(t)},onRead:function(t){n.callbacks.onRead(t)}}),h.appendChild(this.table.getDOM()),this.content.appendChild(h);var m=this.table.addSolutionWord(this.params.solutionWord);""!==this.params.solutionWord&&m&&(this.solutionWord=new p({solutionWord:this.params.solutionWord,tableWidth:this.crosswordLayout.cols}),h.appendChild(this.solutionWord.getDOM())),this.inputarea=new l({words:this.crosswordLayout.result.filter((function(t){return"none"!==t.orientation})),contentId:this.contentId,overlayContainer:this.content,applyPenalties:this.params.applyPenalties,l10n:{across:this.params.l10n.across,down:this.params.l10n.down,extraClue:this.params.l10n.extraClue,closeWindow:this.params.l10n.closeWindow},a11y:this.params.a11y},{onFieldInput:function(t){n.handleFieldInput(t)},onRead:function(t){n.callbacks.onRead(t)}}),this.content.appendChild(this.inputarea.getDOM()),this.params.previousState.cells&&(this.table.setAnswers(this.params.previousState.cells),this.answerGiven=!0),this.params.previousState.focus&&this.params.previousState.focus.position&&this.params.previousState.focus.position.row&&(this.table.setcurrentOrientation(this.params.previousState.focus.orientation,this.params.previousState.focus.position),this.table.focusCell(this.params.previousState.focus.position)),this.overrideCSS(this.params.theme),this.callbacks.onInitialized(!0)}var n=e.prototype;return n.getDOM=function(){return this.content},n.resize=function(){this.table&&(this.table.resize(),this.inputarea.resize(),this.solutionWord&&this.solutionWord.resize())},n.getXAPICorrectResponsesPattern=function(){return this.table.getXAPICorrectResponsesPattern()},n.getXAPIResponse=function(){return this.table.getXAPIResponse()},n.getXAPIDescription=function(){return this.table.getXAPIDescription()},n.reset=function(){this.params.words.length<2||(this.table.reset(),this.solutionWord&&this.solutionWord.reset(),this.inputarea.reset(),this.answerGiven=!1)},n.getAnswerGiven=function(){return this.answerGiven},n.getScore=function(){return this.params.words.length<2?0:this.table.getScore()},n.getMaxScore=function(){return this.params.words.length<2?0:this.table.getMaxScore()},n.getCurrentState=function(){if(!(this.params.words.length<2)&&this.table)return{crosswordLayout:this.crosswordLayout,cells:this.table.getAnswers(),focus:this.table.getFocus()}},n.checkAnswer=function(){if(this.disable(),this.params.scoreWords){var t=this.table.checkAnswerWords();this.inputarea.checkAnswerWords(t)}else{var e=this.table.checkAnswer();this.inputarea.checkAnswer(e)}},n.isTableFilled=function(){return this.table&&this.table.isFilled()},n.showSolutions=function(){this.params.words.length<2||(this.disable(),this.table.showSolutions(),this.solutionWord&&this.solutionWord.showSolutions(),this.inputarea.showSolutions(this.crosswordLayout.result))},n.handleFieldInput=function(t){this.table.fillGrid(t),this.answerGiven=!0},n.handleTableInput=function(t){this.solutionWord&&t.solutionWordId&&this.solutionWord.setCell(t.solutionWordId-1,t.answer),t.inputFieldUpdates&&this.inputarea.fillFields(t.inputFieldUpdates),this.answerGiven=!0,t.checkFilled&&this.isTableFilled()&&this.callbacks.onTableFilled()},n.handleTableFocus=function(t){var e=this.crosswordLayout.result.filter((function(t){return"none"!==t.orientation})).filter((function(e){return e.orientation===t.orientation&&e.clueId===t.clueId}));e.length>0&&this.clueAnnouncer.setClue({clue:e[0].clue,orientation:this.params.l10n[e[0].orientation],clueId:e[0].clueId,answerLength:e[0].answer.length}),this.inputarea.focusClue(t)},n.enable=function(){this.table.enable(),this.inputarea.enable()},n.disable=function(){this.table.disable(),this.table.unhighlight(),this.inputarea.disable(),this.inputarea.unhighlight(),this.clueAnnouncer.reset()},n.overrideCSS=function(){var t=arguments.length>0&&void 0!==arguments[0]?arguments[0]:{};t.gridColor&&this.addStyle(".h5p-crossword .h5p-crossword-grid th, .h5p-crossword .h5p-crossword-grid td,.h5p-crossword .h5p-crossword-grid{border-color:".concat(t.gridColor,"};")),t.cellBackgroundColor&&(this.addStyle(".h5p-crossword .h5p-crossword-cell{background-color:".concat(t.cellBackgroundColor,"};")),this.addStyle(".h5p-crossword .h5p-crossword-cell-clue-id-marker{background-color:".concat(t.cellBackgroundColor,"};"))),t.clueIdColor&&this.addStyle(".h5p-crossword .h5p-crossword-cell-clue-id-marker{color:".concat(t.clueIdColor,"};")),t.cellColor&&this.addStyle(".h5p-crossword .h5p-crossword-cell-canvas{color:".concat(t.cellColor,"};")),t.cellBackgroundColorHighlight&&(this.addStyle(".h5p-crossword .h5p-crossword-cell:not(.h5p-crossword-solution-correct):not(.h5p-crossword-solution-wrong):not(.h5p-crossword-solution-neutral).h5p-crossword-highlight-normal{background-color:".concat(t.cellBackgroundColorHighlight,"};")),this.addStyle(".h5p-crossword .h5p-crossword-cell.h5p-crossword-highlight-normal .h5p-crossword-cell-clue-id-marker, .h5p-crossword .h5p-crossword-cell.h5p-crossword-highlight-normal .h5p-crossword-cell-solution-word-marker{background-color:".concat(t.cellBackgroundColorHighlight,"}")),this.addStyle(".h5p-crossword .h5p-crossword-input-fields-group-wrapper-clue.h5p-crossword-input-fields-group-clue-highlight-focus .h5p-crossword-input-fields-group-clue-id{background-color:".concat(t.cellBackgroundColorHighlight,"}"))),t.clueIdColorHighlight&&this.addStyle(".h5p-crossword .h5p-crossword-cell.h5p-crossword-highlight-normal .h5p-crossword-cell-clue-id-marker, .h5p-crossword .h5p-crossword-cell.h5p-crossword-highlight-normal .h5p-crossword-cell-solution-word-marker{color:".concat(t.clueIdColorHighlight,"}")),t.cellColorHighlight&&(this.addStyle(".h5p-crossword .h5p-crossword-cell.h5p-crossword-highlight-normal .h5p-crossword-cell-canvas{color:".concat(t.cellColorHighlight,"};")),this.addStyle(".h5p-crossword .h5p-crossword-input-fields-group-wrapper-clue.h5p-crossword-input-fields-group-clue-highlight-focus .h5p-crossword-input-fields-group-clue-id{color:".concat(t.cellColorHighlight,"}")))},n.addStyle=function(t){var e=document.createElement("style");e.appendChild(document.createTextNode(t)),document.querySelector("head").appendChild(e)},e}();function w(t,e){return(w=Object.setPrototypeOf||function(t,e){return t.__proto__=e,t})(t,e)}m.MAXIMUM_TRIES=20;var g=function(t){var e,n;function r(e,n){var r,s=arguments.length>2&&void 0!==arguments[2]?arguments[2]:{};(r=t.call(this,"crossword")||this).params=e,r.contentId=n,r.extras=s,r.params=o.extend({solutionWord:"",theme:{backgroundColor:"#173354"},behaviour:{enableSolutionsButton:!0,enableRetry:!0,enableInstantFeedback:!1,scoreWords:!0,applyPenalties:!1},l10n:{across:"across",down:"down",checkAnswer:"Check answer",couldNotGenerateCrossword:"Could not generate a crossword with the given words. Please try again with fewer words or words that have more characters in common.",couldNotGenerateCrosswordTooFewWords:"Could not generate a crossword. You need at least two words.",problematicWords:"Problematic word(s): @words",showSolution:"Show solution",tryAgain:"Retry",extraClue:"Extra clue",closeWindow:"Close window",submitAnswer:"Submit"},a11y:{crosswordGrid:"Crossword grid. Use arrow keys to navigate and keyboard to enter characters. Use tab to use input fields instead.",column:"column",row:"row",across:"across",down:"down",empty:"Empty",resultFor:"Result for: @clue",correct:"Correct",wrong:"Wrong",point:"Point",solutionFor:"The solution for @clue is: @solution",extraClueFor:"Open extra clue for @clue",letterSevenOfNine:"Letter @position of @length",lettersWord:"@length letter word",check:"Check the characters. The responses will be marked as correct, incorrect, or unanswered.",showSolution:"Show the solution. The crossword will be filled with its correct solution.",retry:"Retry the task. Reset all responses and start the task over again.",yourResult:"You got @score out of @total points"}},r.params),r.params.theme=r.getDifference(r.params.theme,{gridColor:"#000000",cellBackgroundColor:"#ffffff",cellColor:"#000000",clueIdColor:"#606060",cellBackgroundColorHighlight:"#3e8de8",cellColorHighlight:"#ffffff",clueIdColorHighlight:"#e0e0e0"}),r.initialButtons={check:!r.params.behaviour.enableInstantFeedback,showSolution:r.params.behaviour.enableSolutionsButton,retry:r.params.behaviour.enableRetry};var i=s.metadata&&s.metadata.defaultLanguage||"en";for(var a in r.languageTag=o.formatLanguageCode(i),r.params.l10n)r.params.l10n[a]=o.stripHTML(o.htmlDecode(r.params.l10n[a]));return r.params.a11y.yourResult=r.params.a11y.yourResult.replace(/\.$/,""),r.previousState=r.extras.previousState||{},r.previousState.crosswordLayout&&r.previousState.cells||(r.previousState={}),r.params.words=(r.params.words||[]).filter((function(t){return void 0!==t.answer&&void 0!==t.clue})).map((function(t){return t.answer=o.stripHTML(o.htmlDecode(o.toUpperCase(t.answer,o.UPPERCASE_EXCEPTIONS))),t.clue=o.stripHTML(o.htmlDecode(t.clue)),t})),r}n=t,(e=r).prototype=Object.create(n.prototype),e.prototype.constructor=e,w(e,n);var s=r.prototype;return s.registerDomElements=function(){var t=this;this.params.taskDescription&&""!==this.params.taskDescription&&(this.introduction=document.createElement("div"),this.introduction.innerHTML=this.params.taskDescription,this.setIntroduction(this.introduction)),this.content=new m({scoreWords:this.params.behaviour.scoreWords,applyPenalties:this.params.behaviour.applyPenalties,theme:this.params.theme,contentId:this.contentId,instantFeedback:this.params.behaviour.enableInstantFeedback,l10n:{couldNotGenerateCrossword:this.params.l10n.couldNotGenerateCrossword,couldNotGenerateCrosswordTooFewWords:this.params.l10n.couldNotGenerateCrosswordTooFewWords,problematicWords:this.params.l10n.problematicWords,across:this.params.l10n.across,down:this.params.l10n.down,extraClue:this.params.l10n.extraClue,closeWindow:this.params.l10n.closeWindow},a11y:this.params.a11y,poolSize:this.params.behaviour.poolSize,solutionWord:o.toUpperCase(this.params.solutionWord.replace(/'\s'/g,""),o.UPPERCASE_EXCEPTIONS),words:this.params.words,previousState:this.previousState},{onTableFilled:function(){t.handleContentFilled()},onInitialized:function(e){t.handleContentInitialized(e)},onRead:function(e){t.handleRead(e)}}),this.setContent(this.content.getDOM()),this.params.behaviour.enableInstantFeedback&&this.content.isTableFilled()&&this.checkAnswer(),o.waitForDOM(".h5p-crossword-input-container",(function(){setTimeout((function(){t.trigger("resize")}),100)}))},s.handleContentInitialized=function(t){var e=this;t&&this.addButtons(),this.on("resize",(function(){e.content.resize()}))},s.addButtons=function(){var t=this;this.addButton("check-answer",this.params.l10n.checkAnswer,(function(){t.checkAnswer(),t.trigger(t.getXAPIAnswerEvent())}),this.initialButtons.check,{"aria-label":this.params.a11y.check},{contentData:this.extras,textIfSubmitting:this.params.l10n.submitAnswer}),this.addButton("show-solution",this.params.l10n.showSolution,(function(){t.showSolutions()}),this.initialButtons.showSolution,{"aria-label":this.params.a11y.showSolution},{}),this.addButton("try-again",this.params.l10n.tryAgain,(function(){t.resetTask()}),this.initialButtons.retry,{"aria-label":this.params.a11y.retry},{})},s.checkAnswer=function(){if(this.content){this.content.checkAnswer(),this.hideButton("check-answer");var t=this.getScore(),e=this.getMaxScore(),n=H5P.Question.determineOverallFeedback(this.params.overallFeedback,t/e),o=this.params.a11y.yourResult.replace("@score",":num").replace("@total",":total");this.setFeedback(n,t,e,o),this.params.behaviour.enableSolutionsButton&&this.showButton("show-solution"),this.params.behaviour.enableRetry&&this.showButton("try-again")}},s.handleRead=function(t){this.read(t)},s.handleContentFilled=function(){this.getMaxScore()>0&&this.getScore()===this.getMaxScore()?(this.checkAnswer(),this.trigger(this.getXAPIAnswerEvent())):this.showButton("check-answer")},s.getAnswerGiven=function(){return!!this.content&&this.content.getAnswerGiven()},s.getScore=function(){return this.content?this.content.getScore():0},s.getMaxScore=function(){return this.content?this.content.getMaxScore():0},s.showSolutions=function(){this.content&&(this.hideButton("check-answer"),this.hideButton("show-solution"),this.content.showSolutions(),this.trigger("resize"))},s.resetTask=function(){this.content&&(this.initialButtons.check?this.showButton("check-answer"):this.hideButton("check-answer"),this.initialButtons.showSolution?this.showButton("show-solution"):this.hideButton("show-solution"),this.initialButtons.retry?this.showButton("try-again"):this.hideButton("try-again"),this.trigger("resize"),this.removeFeedback(),this.content.reset(),this.content.enable())},s.getXAPIData=function(){return{statement:this.getXAPIAnswerEvent().data.statement}},s.getXAPIAnswerEvent=function(){var t=this.createXAPIEvent("answered");return t.setScoredResult(this.getScore(),this.getMaxScore(),this,!0,this.isPassed()),t.data.statement.result.response=this.content.getXAPIResponse(),t},s.createXAPIEvent=function(t){var e=this.createXAPIEventTemplate(t);return o.extend(e.getVerifiedStatementValue(["object","definition"]),this.getxAPIDefinition()),e},s.getxAPIDefinition=function(){var t={name:{}};return t.name[this.languageTag]=this.getTitle(),t.name["en-US"]=t.name[this.languageTag],t.description={},t.description[this.languageTag]="".concat(this.getDescription()),t.description["en-US"]=t.description[this.languageTag],t.type="http://adlnet.gov/expapi/activities/cmi.interaction",t.interactionType="fill-in",t.correctResponsesPattern=this.content.getXAPICorrectResponsesPattern(),t},s.isPassed=function(){return this.getScore()>=this.getMaxScore()||!this.getMaxScore()||0===this.getMaxScore()},s.getTitle=function(){var t;return this.extras.metadata&&(t=this.extras.metadata.title),t=t||r.DEFAULT_DESCRIPTION,H5P.createTitle(t)},s.getDescription=function(){var t=this.params.taskDescription||r.DEFAULT_DESCRIPTION,e=this.content.getXAPIDescription();return"".concat(t).concat(e)},s.getCurrentState=function(){return this.content.getCurrentState()},s.getDifference=function(t,e){for(var n in e)t[n]===e[n]&&delete t[n];return t},r}(H5P.Question);g.DEFAULT_DESCRIPTION="Crossword",H5P=H5P||{},H5P.Crossword=g}();;
