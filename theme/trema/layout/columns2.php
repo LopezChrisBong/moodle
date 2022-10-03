@@ -81,6 +81,7 @@ $templatecontext = [
     'hasregionmainsettingsmenu' => !empty($regionmainsettingsmenu),
     'defaultfrontpagefooter' => format_text($pluginsettings->defaultfooter, FORMAT_HTML, ['context' => $context]),
     'footerinfo' => $pluginsettings->enablefooterinfo,
+    
 ];
 
 echo $OUTPUT->render_from_template('theme_trema/columns2', $templatecontext);
